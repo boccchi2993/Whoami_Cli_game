@@ -444,11 +444,10 @@ registerCommand({
         if (!name) {
             return 'Usage: setprompt <name>';
         }
-        var promptStr = name.match(/^[a-zA-Z0-9_-]+$/) ? name : 'user';
-        state.prompt = promptStr;
-        ctx.term.set_prompt(promptStr + '> ');
+        state.prompt = name;
+        ctx.term.set_prompt(name + '> ');
         updateStatusBar();
-        return 'Prompt set to: ' + promptStr;
+        return 'Prompt set to: ' + name;
     }
 });
 
@@ -598,7 +597,7 @@ $(function() {
     });
 
     $(window).on('resize', function() {
-        term.resize();
+        if (typeof term.resize === 'function') term.resize();
     });
 });
 </script>
