@@ -48,8 +48,8 @@ body {
 #app {
     display: flex;
     flex-direction: column;
-    height: 100dvh;
     height: 100vh;
+    height: 100dvh;
     max-width: 100%;
 }
 
@@ -240,6 +240,10 @@ body {
 /* ============================================================
  *  STATE
  * ============================================================ */
+
+// Global typewriter toggle — exposed for agent extensibility
+const ENABLE_TYPEWRITER = true;
+
 const state = {
     stage: 'cli_base',
     role: 'user',
@@ -266,6 +270,10 @@ const state = {
 
         'prompts/system.txt': 'System prompt not configured.',
 
+        'prompts/user.txt': 'User prompt not configured.',
+
+        'prompts/assistant.txt': 'Assistant prompt not configured.',
+
         'archive/previous_user.log': 'No archived user.',
 
         '.clwade/session.json': [
@@ -280,7 +288,7 @@ const state = {
     memory: {},
 
     settings: {
-        typewriter: true,
+        typewriter: ENABLE_TYPEWRITER,
         reducedMotion: false
     }
 };
@@ -325,6 +333,30 @@ function flushTypewriterQueue() {
     }
 }
 
+/** Type text into an element character by character. */
+function typeText(element, text, speed = 15, onComplete) {
+    if (!state.settings.typewriter || state.settings.reducedMotion) {
+        element.textContent = text;
+        if (onComplete) onComplete();
+        return;
+    }
+
+    let i = 0;
+    element.textContent = '';
+
+    typewriterTimer = setInterval(() => {
+        if (i < text.length) {
+            element.textContent += text.charAt(i);
+            i++;
+            scrollToBottom();
+        } else {
+            clearInterval(typewriterTimer);
+            typewriterTimer = null;
+            if (onComplete) onComplete();
+        }
+    }, speed);
+}
+
 function processTypewriterQueue() {
     if (typewriterActive) return;
     if (typewriterQueue.length === 0) return;
@@ -337,24 +369,12 @@ function processTypewriterQueue() {
     const job = typewriterQueue.shift();
     typewriterCurrent = { element: job.element, fullText: job.text };
 
-    let i = 0;
-    const speed = job.speed || 15;
-    job.element.textContent = '';
-
-    typewriterTimer = setInterval(() => {
-        if (i < job.text.length) {
-            job.element.textContent += job.text.charAt(i);
-            i++;
-            scrollToBottom();
-        } else {
-            clearInterval(typewriterTimer);
-            typewriterTimer = null;
-            typewriterCurrent = null;
-            typewriterActive = false;
-            scrollToBottom();
-            processTypewriterQueue();
-        }
-    }, speed);
+    typeText(job.element, job.text, job.speed || 15, () => {
+        typewriterCurrent = null;
+        typewriterActive = false;
+        scrollToBottom();
+        processTypewriterQueue();
+    });
 }
 
 // ============================================================
@@ -533,6 +553,7 @@ registerCommand({
         printBlock(
             `session: local\n` +
             `role: ${ctx.role}\n` +
+            `prompt: ${ctx.prompt}\n` +
             `stage: ${ctx.stage}\n` +
             `api: not_configured`
         );
@@ -763,7 +784,6 @@ $.input.addEventListener('keydown', (e) => {
     if (e.key === 'l' && e.ctrlKey) {
         e.preventDefault();
         cancelTypewriter();
-        printInstant(`${state.prompt}> `, { className: 'output-echo' });
         $.terminal.innerHTML = '';
         $.input.value = '';
     }
