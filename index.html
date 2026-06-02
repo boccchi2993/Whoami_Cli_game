@@ -1,0 +1,807 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content">
+<title>Clwade cdoe v0.0.7-nightmare</title>
+<style>
+/* ============================================================
+   RESET & BASE
+   ============================================================ */
+*, *::before, *::after {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+:root {
+    --bg: #0a0c0e;
+    --bg-status: #0c0e10;
+    --text: #b8c8c8;
+    --text-dim: #8898a0;
+    --prompt: #7eb87e;
+    --error: #cc8866;
+    --highlight: #6aaa6a;
+    --font-mono: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Consolas', 'Monaco', 'Courier New', monospace;
+    --font-size: 15px;
+    --line-height: 1.5;
+}
+
+html, body {
+    height: 100%;
+    overflow: hidden;
+}
+
+body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-mono);
+    font-size: var(--font-size);
+    line-height: var(--line-height);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+/* ============================================================
+   APP LAYOUT
+   ============================================================ */
+#app {
+    display: flex;
+    flex-direction: column;
+    height: 100dvh;
+    height: 100vh;
+    max-width: 100%;
+}
+
+/* ============================================================
+   STATUS BAR
+   ============================================================ */
+#status-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-shrink: 0;
+    height: 24px;
+    padding: 0 12px;
+    background: var(--bg-status);
+    color: var(--text-dim);
+    font-size: 12px;
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+    user-select: none;
+}
+
+#status-bar .left { display: flex; gap: 20px; }
+#status-bar .right { display: flex; gap: 20px; }
+
+/* ============================================================
+   TERMINAL OUTPUT AREA
+   ============================================================ */
+#terminal {
+    flex: 1;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 12px 16px;
+    position: relative;
+    word-break: break-word;
+}
+
+/* Scanline overlay */
+#terminal::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: repeating-linear-gradient(
+        0deg,
+        rgba(255,255,255,0.015) 0px,
+        rgba(255,255,255,0.015) 1px,
+        transparent 1px,
+        transparent 3px
+    );
+    pointer-events: none;
+    z-index: 2;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+    #terminal::after {
+        animation: scanlines 10s linear infinite;
+    }
+}
+
+@keyframes scanlines {
+    0%   { background-position: 0 0; }
+    100% { background-position: 0 4px; }
+}
+
+/* Output line styles */
+.output-line {
+    white-space: pre-wrap;
+    min-height: 1.2em;
+}
+
+.output-block {
+    white-space: pre-wrap;
+    margin: 2px 0 6px 0;
+}
+
+.output-echo {
+    color: #8898a8;
+}
+
+.output-error {
+    color: var(--error);
+}
+
+.output-dim {
+    color: var(--text-dim);
+}
+
+/* ============================================================
+   INPUT LINE
+   ============================================================ */
+#input-line {
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
+    padding: 6px 16px;
+    padding-bottom: max(6px, env(safe-area-inset-bottom, 6px));
+    border-top: 1px solid rgba(255,255,255,0.04);
+    background: var(--bg);
+}
+
+#prompt {
+    color: var(--prompt);
+    white-space: pre;
+    flex-shrink: 0;
+    user-select: none;
+}
+
+#cmd-input {
+    flex: 1;
+    background: transparent;
+    border: none;
+    outline: none;
+    color: inherit;
+    font-family: inherit;
+    font-size: inherit;
+    line-height: inherit;
+    caret-color: var(--prompt);
+    min-width: 0;
+    padding: 0;
+    margin-left: 6px;
+}
+
+#cmd-input::selection {
+    background: rgba(120,180,120,0.3);
+    color: #fff;
+}
+
+/* ============================================================
+   SCROLLBAR
+   ============================================================ */
+#terminal::-webkit-scrollbar {
+    width: 6px;
+}
+
+#terminal::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+#terminal::-webkit-scrollbar-thumb {
+    background: rgba(255,255,255,0.08);
+    border-radius: 3px;
+}
+
+#terminal::-webkit-scrollbar-thumb:hover {
+    background: rgba(255,255,255,0.15);
+}
+
+/* ============================================================
+   SELECTION
+   ============================================================ */
+#terminal ::selection {
+    background: rgba(120,180,120,0.25);
+    color: #e0f0e0;
+}
+
+/* ============================================================
+   REDUCED MOTION
+   ============================================================ */
+@media (prefers-reduced-motion: reduce) {
+    #terminal::after {
+        animation: none !important;
+    }
+}
+</style>
+</head>
+<body>
+<div id="app">
+    <div id="status-bar">
+        <span class="left">
+            <span>Clwade cdoe v0.0.7-nightmare</span>
+        </span>
+        <span class="right">
+            <span>session: local</span>
+            <span>role: user</span>
+        </span>
+    </div>
+
+    <div id="terminal"></div>
+
+    <form id="input-line" autocomplete="off">
+        <span id="prompt">user&gt;</span>
+        <input id="cmd-input" type="text" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off" enterkeyhint="go">
+    </form>
+</div>
+
+<script>
+/* ============================================================
+ *  STATE
+ * ============================================================ */
+const state = {
+    stage: 'cli_base',
+    role: 'user',
+    prompt: 'user',
+    commandHistory: [],
+    historyIndex: -1,
+
+    // Virtual file system — flat keyed by path
+    files: {
+        'profile.json': [
+            '{',
+            '  "name": null,',
+            '  "role": "user",',
+            '  "status": "unconfigured"',
+            '}'
+        ].join('\n'),
+
+        'api_key.status': [
+            'api: not_configured',
+            'storage: none'
+        ].join('\n'),
+
+        'rumor.txt': 'No rumor loaded.',
+
+        'prompts/system.txt': 'System prompt not configured.',
+
+        'archive/previous_user.log': 'No archived user.',
+
+        '.clwade/session.json': [
+            '{',
+            '  "stage": "cli_base",',
+            '  "handoff": false',
+            '}'
+        ].join('\n')
+    },
+
+    flags: {},
+    memory: {},
+
+    settings: {
+        typewriter: true,
+        reducedMotion: false
+    }
+};
+
+// ============================================================
+// DOM REFERENCES
+// ============================================================
+const $ = {
+    app:       document.getElementById('app'),
+    statusBar: document.getElementById('status-bar'),
+    terminal:  document.getElementById('terminal'),
+    inputLine: document.getElementById('input-line'),
+    prompt:    document.getElementById('prompt'),
+    input:     document.getElementById('cmd-input')
+};
+
+// ============================================================
+// TYPEWRITER SYSTEM
+// ============================================================
+let typewriterQueue = [];
+let typewriterTimer  = null;
+let typewriterActive = false;
+let typewriterCurrent = null; // { element, fullText }
+
+function cancelTypewriter() {
+    if (typewriterTimer) {
+        clearInterval(typewriterTimer);
+        typewriterTimer = null;
+    }
+    if (typewriterCurrent) {
+        typewriterCurrent.element.textContent = typewriterCurrent.fullText;
+        typewriterCurrent = null;
+    }
+    typewriterActive = false;
+    flushTypewriterQueue();
+}
+
+function flushTypewriterQueue() {
+    while (typewriterQueue.length > 0) {
+        const job = typewriterQueue.shift();
+        job.element.textContent = job.text;
+    }
+}
+
+function processTypewriterQueue() {
+    if (typewriterActive) return;
+    if (typewriterQueue.length === 0) return;
+    if (!state.settings.typewriter || state.settings.reducedMotion) {
+        flushTypewriterQueue();
+        return;
+    }
+
+    typewriterActive = true;
+    const job = typewriterQueue.shift();
+    typewriterCurrent = { element: job.element, fullText: job.text };
+
+    let i = 0;
+    const speed = job.speed || 15;
+    job.element.textContent = '';
+
+    typewriterTimer = setInterval(() => {
+        if (i < job.text.length) {
+            job.element.textContent += job.text.charAt(i);
+            i++;
+            scrollToBottom();
+        } else {
+            clearInterval(typewriterTimer);
+            typewriterTimer = null;
+            typewriterCurrent = null;
+            typewriterActive = false;
+            scrollToBottom();
+            processTypewriterQueue();
+        }
+    }, speed);
+}
+
+// ============================================================
+// CORE FUNCTIONS
+// ============================================================
+
+/** Append a single line to the terminal output. */
+function printLine(text, options = {}) {
+    const div = document.createElement('div');
+    div.className = 'output-line';
+    if (options.className) div.classList.add(options.className);
+
+    $.terminal.appendChild(div);
+
+    typewriterQueue.push({ element: div, text, speed: options.speed || 18 });
+    processTypewriterQueue();
+    scrollToBottom();
+
+    return div;
+}
+
+/** Append a multi-line block to the terminal output. */
+function printBlock(text, options = {}) {
+    const div = document.createElement('div');
+    div.className = 'output-block';
+    div.style.whiteSpace = 'pre-wrap';
+    if (options.className) div.classList.add(options.className);
+
+    $.terminal.appendChild(div);
+
+    typewriterQueue.push({ element: div, text, speed: options.speed || 10 });
+    processTypewriterQueue();
+    scrollToBottom();
+
+    return div;
+}
+
+/** Instantly append a line (bypassing typewriter). */
+function printInstant(text, options = {}) {
+    const div = document.createElement('div');
+    div.className = 'output-line';
+    if (options.className) div.classList.add(options.className);
+    div.textContent = text;
+    $.terminal.appendChild(div);
+    scrollToBottom();
+    return div;
+}
+
+/** Scroll terminal output to bottom. */
+function scrollToBottom() {
+    requestAnimationFrame(() => {
+        $.terminal.scrollTop = $.terminal.scrollHeight;
+    });
+}
+
+/** Change the prompt text. */
+function setPrompt(name) {
+    state.prompt = name;
+    $.prompt.textContent = name + '>';
+}
+
+/** Update the status bar with current state. */
+function updateStatusBar() {
+    const right = $.statusBar.querySelector('.right');
+    if (right) {
+        right.innerHTML = `<span>session: local</span><span>role: ${state.role}</span>`;
+    }
+}
+
+/** Normalize a virtual filesystem path. */
+function normalizePath(path) {
+    let p = String(path).trim().replace(/^\/+/, '').replace(/\/+$/, '');
+    const parts = p.split('/').filter(s => s.length > 0);
+    const resolved = [];
+    for (const part of parts) {
+        if (part === '.') continue;
+        if (part === '..') {
+            resolved.pop();
+        } else {
+            resolved.push(part);
+        }
+    }
+    return resolved.join('/');
+}
+
+/** Read a virtual file's content, or null if not found. */
+function readVirtualFile(path) {
+    const key = normalizePath(path);
+    if (state.files.hasOwnProperty(key)) {
+        return state.files[key];
+    }
+    return null;
+}
+
+/** List entries in a virtual directory. */
+function listVirtualDirectory(path) {
+    const prefix = path ? path + '/' : '';
+    const entries = new Set();
+
+    for (const filePath of Object.keys(state.files)) {
+        if (!filePath.startsWith(prefix)) continue;
+        const relative = filePath.slice(prefix.length);
+        const slashIndex = relative.indexOf('/');
+        if (slashIndex === -1) {
+            entries.add(relative);
+        } else {
+            entries.add(relative.substring(0, slashIndex) + '/');
+        }
+    }
+
+    return [...entries].sort();
+}
+
+// ============================================================
+// COMMAND REGISTRY
+// ============================================================
+const registry = {};
+
+function registerCommand(cmd) {
+    registry[cmd.name] = cmd;
+}
+
+// ----------------------------------------
+// Command: help
+// ----------------------------------------
+registerCommand({
+    name: 'help',
+    description: 'Show available commands',
+    usage: 'help',
+    handler(args, ctx) {
+        const names = Object.keys(registry).sort();
+        const colWidth = Math.max(...names.map(n => n.length)) + 3;
+        let out = 'Available commands:\n\n';
+        for (const name of names) {
+            const cmd = registry[name];
+            out += `  ${name.padEnd(colWidth)} ${cmd.description}\n`;
+        }
+        out += '\nType a command and press Enter to execute.\n';
+        out += 'Use \u2191/\u2193 to browse history.  Ctrl+L to clear.';
+        printBlock(out);
+    }
+});
+
+// ----------------------------------------
+// Command: clear
+// ----------------------------------------
+registerCommand({
+    name: 'clear',
+    description: 'Clear the terminal screen',
+    usage: 'clear',
+    handler(args, ctx) {
+        $.terminal.innerHTML = '';
+    }
+});
+
+// ----------------------------------------
+// Command: whoami
+// ----------------------------------------
+registerCommand({
+    name: 'whoami',
+    description: 'Show current identity',
+    usage: 'whoami',
+    handler(args, ctx) {
+        printLine(ctx.role);
+    }
+});
+
+// ----------------------------------------
+// Command: status
+// ----------------------------------------
+registerCommand({
+    name: 'status',
+    description: 'Show session status',
+    usage: 'status',
+    handler(args, ctx) {
+        printBlock(
+            `session: local\n` +
+            `role: ${ctx.role}\n` +
+            `stage: ${ctx.stage}\n` +
+            `api: not_configured`
+        );
+    }
+});
+
+// ----------------------------------------
+// Command: echo
+// ----------------------------------------
+registerCommand({
+    name: 'echo',
+    description: 'Print text to the terminal',
+    usage: 'echo <text>',
+    handler(args, ctx) {
+        printLine(args || '');
+    }
+});
+
+// ----------------------------------------
+// Command: date
+// ----------------------------------------
+registerCommand({
+    name: 'date',
+    description: 'Show current date and time',
+    usage: 'date',
+    handler(args, ctx) {
+        printLine(new Date().toString());
+    }
+});
+
+// ----------------------------------------
+// Command: history
+// ----------------------------------------
+registerCommand({
+    name: 'history',
+    description: 'Show command history',
+    usage: 'history',
+    handler(args, ctx) {
+        if (ctx.commandHistory.length === 0) {
+            printLine('No command history.');
+            return;
+        }
+        let out = '';
+        ctx.commandHistory.forEach((cmd, i) => {
+            out += `  ${String(i + 1).padStart(4)}  ${cmd}\n`;
+        });
+        printBlock(out);
+    }
+});
+
+// ----------------------------------------
+// Command: setprompt
+// ----------------------------------------
+registerCommand({
+    name: 'setprompt',
+    description: 'Change the input prompt',
+    usage: 'setprompt <name>',
+    handler(args, ctx) {
+        const name = args.trim();
+        if (!name) {
+            printLine('Usage: setprompt <name>');
+            return;
+        }
+        setPrompt(name);
+        printLine(`Prompt set to: ${name}`);
+    }
+});
+
+// ----------------------------------------
+// Command: resetprompt
+// ----------------------------------------
+registerCommand({
+    name: 'resetprompt',
+    description: 'Reset prompt to default',
+    usage: 'resetprompt',
+    handler(args, ctx) {
+        setPrompt('user');
+        printLine('Prompt reset to: user');
+    }
+});
+
+// ----------------------------------------
+// Command: ls
+// ----------------------------------------
+registerCommand({
+    name: 'ls',
+    description: 'List virtual directory contents',
+    usage: 'ls [path]',
+    handler(args, ctx) {
+        const path = args.trim() ? normalizePath(args.trim()) : '';
+        const entries = listVirtualDirectory(path);
+        if (entries.length === 0) {
+            printLine('(empty)');
+            return;
+        }
+        let out = '';
+        entries.forEach(e => { out += `  ${e}\n`; });
+        printBlock(out);
+    }
+});
+
+// ----------------------------------------
+// Command: cat
+// ----------------------------------------
+registerCommand({
+    name: 'cat',
+    description: 'Read a virtual file',
+    usage: 'cat <filename>',
+    handler(args, ctx) {
+        const filename = args.trim();
+        if (!filename) {
+            printLine('Usage: cat <filename>');
+            return;
+        }
+        const content = readVirtualFile(filename);
+        if (content === null) {
+            printLine(`cat: ${filename}: No such file`);
+            return;
+        }
+        printBlock(content);
+    }
+});
+
+// ----------------------------------------
+// Command: exit
+// ----------------------------------------
+registerCommand({
+    name: 'exit',
+    description: 'Exit (session stays alive)',
+    usage: 'exit',
+    handler(args, ctx) {
+        printLine('exit: session is running');
+    }
+});
+
+// ============================================================
+// COMMAND EXECUTION
+// ============================================================
+
+/** Split raw input into command name and argument string. */
+function parseInput(raw) {
+    const trimmed = raw.trim();
+    const spaceIdx = trimmed.indexOf(' ');
+    if (spaceIdx === -1) {
+        return { name: trimmed.toLowerCase(), args: '' };
+    }
+    return {
+        name: trimmed.substring(0, spaceIdx).toLowerCase(),
+        args: trimmed.substring(spaceIdx + 1).trim()
+    };
+}
+
+/** Execute a command from raw user input. */
+function executeCommand(rawInput) {
+    const input = rawInput.trim();
+
+    // Echo the command in output
+    printInstant(`${state.prompt}> ${input}`, { className: 'output-echo' });
+
+    if (input.length === 0) {
+        // Empty input — just echo the prompt line, nothing else
+        return;
+    }
+
+    // Record history
+    state.commandHistory.push(input);
+    state.historyIndex = state.commandHistory.length;
+
+    const { name, args } = parseInput(input);
+    const cmd = registry[name];
+
+    if (cmd) {
+        try {
+            cmd.handler(args, state);
+        } catch (err) {
+            printLine(`error: ${err.message}`, { className: 'output-error' });
+        }
+    } else {
+        printLine(`command not found: ${name}`, { className: 'output-error' });
+        printLine(`type "help" for available commands`, { className: 'output-dim' });
+    }
+}
+
+// ============================================================
+// EVENT HANDLERS
+// ============================================================
+
+/** Handle form submit (mobile Enter key, etc.). */
+$.inputLine.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const raw = $.input.value;
+
+    // Cancel any running typewriter so output completes instantly
+    cancelTypewriter();
+
+    executeCommand(raw);
+    $.input.value = '';
+});
+
+/** Handle keydown for special keys (Enter is handled by form submit). */
+$.input.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        if (state.commandHistory.length === 0) return;
+        if (state.historyIndex > 0) {
+            state.historyIndex--;
+        }
+        $.input.value = state.commandHistory[state.historyIndex] || '';
+        // Move cursor to end
+        $.input.setSelectionRange($.input.value.length, $.input.value.length);
+        return;
+    }
+
+    if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        if (state.historyIndex < state.commandHistory.length - 1) {
+            state.historyIndex++;
+            $.input.value = state.commandHistory[state.historyIndex];
+        } else {
+            state.historyIndex = state.commandHistory.length;
+            $.input.value = '';
+        }
+        $.input.setSelectionRange($.input.value.length, $.input.value.length);
+        return;
+    }
+
+    // Ctrl+L shortcut for clear
+    if (e.key === 'l' && e.ctrlKey) {
+        e.preventDefault();
+        cancelTypewriter();
+        printInstant(`${state.prompt}> `, { className: 'output-echo' });
+        $.terminal.innerHTML = '';
+        $.input.value = '';
+    }
+});
+
+/** Re-focus input when clicking anywhere — respects text selection. */
+$.app.addEventListener('click', () => {
+    const sel = window.getSelection();
+    if (!sel || sel.toString().length === 0) {
+        $.input.focus();
+    }
+});
+
+// ============================================================
+// INITIALIZATION
+// ============================================================
+function init() {
+    // Detect reduced motion preference
+    const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
+    state.settings.reducedMotion = mq.matches;
+    mq.addEventListener('change', (e) => {
+        state.settings.reducedMotion = e.matches;
+    });
+
+    // Welcome message
+    printBlock('Clwade cdoe v0.0.7-nightmare', { speed: 25 });
+    printLine('local terminal initialized.', { speed: 20 });
+    printLine('type "help" to list available commands.', { speed: 20 });
+
+    // Focus input
+    $.input.focus();
+
+    // Scroll to bottom
+    scrollToBottom();
+}
+
+// Boot
+init();
+</script>
+</body>
+</html>
