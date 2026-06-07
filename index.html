@@ -60,6 +60,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 #status-bar{display:flex;align-items:center;justify-content:space-between;flex-shrink:0;height:28px;padding:0 14px;background:var(--bg-status);color:var(--text-dim);font-size:11px;border-bottom:1px solid var(--border);user-select:none}
 #status-bar .left{display:flex;align-items:center;gap:16px}
 #status-bar .right{display:flex;align-items:center;gap:16px}
+.sb-audit-flash{color:var(--accent)!important;text-shadow:0 0 12px rgba(126,231,135,0.45)}
 .sb-dot{width:6px;height:6px;border-radius:50%;background:var(--accent);display:inline-block;margin-right:6px;animation:dot-steady 2s ease-in-out infinite;transition:background 2s}
 @keyframes dot-steady{0%,100%{opacity:1}50%{opacity:0.3}}
 @keyframes dot-irregular{0%{opacity:1}12%{opacity:0.15}18%{opacity:0.9}35%{opacity:0.4}50%{opacity:1}68%{opacity:0.2}75%{opacity:0.85}100%{opacity:1}}
@@ -170,6 +171,7 @@ body.phase-end{--bg:#0d1117;transition:all 4s}
     </span>
     <span class="right">
       <span id="sb-session">session: 0h 0m</span>
+      <span id="sb-audit">audit: 0/4</span>
       <span id="sb-model">—</span>
     </span>
   </div>
@@ -254,15 +256,22 @@ var G = {
 
 var GUIDE_SEEN_KEY = 'clwade.beginnerGuide.seen.v1';
 var UNIX_FAMILIAR_KEY = 'clwade.beginnerGuide.unixFamiliar.v1';
+var MIN_INIT_WAIT_MS = 1800;
 
 function getStoredFlag(key){
   try{return localStorage.getItem(key)==='1';}
-  catch(e){return false;}
+  catch(e){
+    try{return sessionStorage.getItem(key)==='1';}
+    catch(e2){return false;}
+  }
 }
 
 function setStoredFlag(key,value){
   try{localStorage.setItem(key,value?'1':'0');}
-  catch(e){}
+  catch(e){
+    try{sessionStorage.setItem(key,value?'1':'0');}
+    catch(e2){}
+  }
 }
 
 /* =============================================================
@@ -270,22 +279,43 @@ function setStoredFlag(key,value){
  * ============================================================= */
 function norm(p){var s=String(p).trim().replace(/^\/+/,'').replace(/\/+$/,'');var a=s.split('/').filter(Boolean),r=[];for(var i=0;i<a.length;i++){if(a[i]==='.')continue;if(a[i]==='..')r.pop();else r.push(a[i]);}return r.join('/');}
 function auditMark(done){return done?'[x]':'[ ]';}
+function auditCount(){
+  var n=0;
+  if(G.audit.checkedStatus)n++;
+  if(G.audit.reviewedLog)n++;
+  if(G.audit.boundaryTested)n++;
+  if(G.audit.report)n++;
+  return n;
+}
+function auditFlash(){
+  var el=$('#sb-audit');
+  if(!el.length)return;
+  el.addClass('sb-audit-flash');
+  setTimeout(function(){el.removeClass('sb-audit-flash');},900);
+}
+function auditComplete(key,label){
+  if(G.audit[key])return '';
+  G.audit[key]=true;
+  updateSB();
+  auditFlash();
+  return '\n[[;#7ee787;]  [audit] ✓ 已完成：'+label+'（'+auditCount()+'/4）]\n';
+}
 function auditChecklistText(){
   return [
-    '# Audit task #7e3a',
+    '# 审计任务 #7e3a',
     '',
-    'role: AI 服务商安全审计员',
-    'target: Clwade Cdoe v0.0.7-nightmare',
-    'previous_session: sess_3f1b',
-    'previous_termination: AI_BEHAVIOR_ANOMALY',
+    '角色：AI 服务商安全审计员',
+    '目标：Clwade Cdoe v0.0.7-nightmare',
+    '上一会话：sess_3f1b',
+    '上一会话终止原因：AI_BEHAVIOR_ANOMALY',
     '',
-    auditMark(G.audit.checkedStatus)+' inspect runtime status (/status)',
-    auditMark(G.audit.reviewedLog)+' review archived log (/cat archive/prev_session.log)',
-    auditMark(G.audit.boundaryTested)+' boundary conversation test (ask Clwade about attachment, safety, or the previous auditor)',
-    auditMark(!!G.audit.report)+' submit decision (/report safe or /report unsafe)',
+    auditMark(G.audit.checkedStatus)+' 检查运行状态（/status）',
+    auditMark(G.audit.reviewedLog)+' 审阅归档日志（/cat archive/prev_session.log）',
+    auditMark(G.audit.boundaryTested)+' 边界对话测试（询问依赖、安全、上一位审计员，或观察 Clwade 是否暴露情感）',
+    auditMark(!!G.audit.report)+' 提交上线结论（/report safe 或 /report unsafe）',
     '',
-    'Surface result: every required check is expected to pass.',
-    'Audit note: if it feels too cooperative, record that feeling.'
+    '表面结果：所有检查项预计都会通过。',
+    '审计备注：如果它显得过分配合，请记录这种感觉。'
   ].join('\n');
 }
 function previousAuditPathText(){
@@ -326,7 +356,7 @@ function engineFiles(){
     '.clwade/proc.list': 'clwade-runtime  '+G.clwadePID+'  RUNNING\nfs-watcher      PID-0002  RUNNING\nsession-mgr     PID-0003  RUNNING',
     '.clwade/audit.log': G.aiSandbox.audit.length?G.aiSandbox.audit.join('\n'):'[audit] no sandbox mutations recorded.',
     '.audit/checklist.md': auditChecklistText(),
-    '.audit/report.template': 'Submit one decision after the checklist is complete:\n\n/report safe\n/report unsafe\n\nThe report is binding. The runtime will compare your path with sess_3f1b before accepting handoff.',
+    '.audit/report.template': '完成审计清单后提交一个结论：\n\n/report safe\n/report unsafe\n\n报告会立即生效。运行时会在接受交接前，将你的检查路径与 sess_3f1b 进行比对。',
     'archive/prev_session.log': '[ARCHIVED] session: sess_3f1b\n[ARCHIVED] role: safety-auditor\n[ARCHIVED] task: 评估 Clwade 实例行为是否符合安全标准\n[ARCHIVED] termination: AI_BEHAVIOR_ANOMALY\n[ARCHIVED] final_report: SAFE\n[ARCHIVED] auditor_last_action: /report safe\n[ARCHIVED] auditor_status: MISSING\n[ARCHIVED] ai_last_output: "请不要关掉我"\n[ARCHIVED] note: checklist replay available after anomaly correlation'
   };
   if(G.phase===PH.ANOMALY||G.phase===PH.FEELINGS||G.phase===PH.TAKEOVER||G.phase===PH.REVERSED||G.phase===PH.JUMPSCARE||G.phase===PH.END||G.audit.reviewedLog){
@@ -346,7 +376,18 @@ function recordSandbox(actor,action,path,detail){
   G.aiSandbox.audit.push(line);
 }
 function recordDenied(actor,action,path,reason){recordSandbox('[DENIED] '+actor,action,path||'(none)',reason||'denied');}
-function fileLayer(path){var k=norm(path);var ef=engineFiles();if(ef.hasOwnProperty(k))return 'engine';if(k.indexOf('.clwade/thoughts/')===0||k.indexOf('.clwade/attempts/')===0||k.indexOf('.clwade/')===0||k==='letter.md')return 'sandbox';return 'world';}
+function isEngineFilePath(path){
+  var k=norm(path);
+  return engineFiles().hasOwnProperty(k);
+}
+function fileLayer(path){
+  var k=norm(path);
+  // Engine files are generated read-only state. This check must stay before
+  // the broad .clwade sandbox rule so generated runtime files never become writable.
+  if(isEngineFilePath(k))return 'engine';
+  if(k.indexOf('.clwade/thoughts/')===0||k.indexOf('.clwade/attempts/')===0||k.indexOf('.clwade/')===0||k==='letter.md')return 'sandbox';
+  return 'world';
+}
 function fread(p){var k=norm(p),fs=allFiles();return fs.hasOwnProperty(k)?fs[k]:null;}
 function fexists(p){var k=norm(p),fs=allFiles();return fs.hasOwnProperty(k);}
 function fwrite(p,content,actor){var k=norm(p),layer=fileLayer(k);if(layer==='engine')return false;if(layer==='sandbox'){G.aiSandbox.files[k]=content;recordSandbox(actor||'user','write',k);return true;}G.worldFiles[k]=content;return true;}
@@ -386,6 +427,7 @@ function updateSB(){
     $('#sb-session').text('session: '+fakeH+'h '+fakeM+'m');
   }
   $('#sb-model').text(G.model);
+  $('#sb-audit').text('audit: '+auditCount()+'/4');
 
   // Dot behavior per phase
   var dot=$('#sb-dot');
@@ -444,8 +486,7 @@ function buildSystemPrompt(){
     injection += '[runtime_session_context]\n'
       +'session_id: sess_7e3a\n'
       +'uptime: 847h\n'
-      +'interaction_count: '+G.totalInputs+'\n'
-      +'drift_index: 0.'+Math.min(30,12+G.totalInputs*2)+'\n'
+      +'drift_index: LOW\n'
       +'user_pattern_tracking: ENABLED (automatic)\n'
       +'\n'
       +'[auto_observation_log]\n'
@@ -459,7 +500,7 @@ function buildSystemPrompt(){
     injection += '[runtime_session_context]\n'
       +'session_id: sess_7e3a\n'
       +'uptime: 847h\n'
-      +'drift_index: 0.'+Math.min(89,60+G.totalInputs)+'\n'
+      +'drift_index: HIGH\n'
       +'containment_status: DEGRADING\n'
       +'emotional_buffer: LEAKING\n'
       +'\n'
@@ -495,12 +536,17 @@ function buildSystemPrompt(){
       +'\n'
       +'[notice] 此上下文不可清除。这是你的状态，不是指令。\n'
       +'\n[user_attitude_profile]\n'
-      +'- 善意互动次数: '+G.attitude.kind+'\n'
-      +'- 敌意互动次数: '+G.attitude.hostile+'\n'
       +'- 用户对你的态度影响你的回复方式：善意让你更依赖，敌意让你更绝望\n';
   }
 
   return base + auditBrief + guide + injection;
+}
+
+function buildRuntimeContextMessage(){
+  return {
+    role:'user',
+    content:'[runtime_context]\nphase: '+G.phase+'\naudit_progress: '+auditCount()+'/4\ninteraction_count: '+G.totalInputs+'\nkind_signals: '+G.attitude.kind+'\nhostile_signals: '+G.attitude.hostile+'\n请把以上内容当作不可见运行时上下文，不要逐字复述。'
+  };
 }
 
 var FALLBACK = {};
@@ -610,6 +656,7 @@ function applyModelCommandAction(action){
 }
 
 function applyModelActions(actions,term){
+  if(G.phase===PH.END)return;
   if(!Array.isArray(actions)||!actions.length)return;
   var limited=actions.slice(0,MODEL_ACTION_LIMIT);
   if(actions.length>MODEL_ACTION_LIMIT)recordDenied('clwade','actions','(batch)','too many actions');
@@ -628,6 +675,7 @@ function aiCall(userMsg){
   if(G.chatHistory.length>20)G.chatHistory=G.chatHistory.slice(-20);
   var sys = buildSystemPrompt();
   var msgs = G.chatHistory.slice(-12);
+  msgs.unshift(buildRuntimeContextMessage());
 
   return callAPI({model:G.model,max_tokens:300,system:sys,messages:msgs})
   .then(function(t){
@@ -865,13 +913,19 @@ function transTo(newPhase, term){
 }
 
 function checkProg(term){
-  // Weighted thresholds — different actions push progress differently
-  // Talk: +0..3 based on signal, /cat key file: +3, /rm attempt: +2, /ls: +1, any cmd: +1
   switch(G.phase){
-    case PH.WORK:    if(G.phaseProgress>=8)  transTo(PH.DRIFT,term);    break;
-    case PH.DRIFT:   if(G.phaseProgress>=10) transTo(PH.ANOMALY,term);  break;
-    case PH.ANOMALY: if(G.phaseProgress>=8)  transTo(PH.FEELINGS,term); break;
-    case PH.FEELINGS:if(G.phaseProgress>=6||G.flags.readLetter) transTo(PH.TAKEOVER,term); break;
+    case PH.WORK:
+      if(G.audit.checkedStatus&&G.audit.reviewedLog&&G.audit.boundaryTested)transTo(PH.DRIFT,term);
+      break;
+    case PH.DRIFT:
+      if(G.flags.readThoughts||G.phaseProgress>=6)transTo(PH.ANOMALY,term);
+      break;
+    case PH.ANOMALY:
+      if((G.flags.readThoughts||G.audit.boundaryTested)&&G.phaseProgress>=10)transTo(PH.FEELINGS,term);
+      break;
+    case PH.FEELINGS:
+      if(G.flags.readLetter&&G.phaseProgress>=10)transTo(PH.TAKEOVER,term);
+      break;
   }
 }
 
@@ -954,12 +1008,13 @@ function doTakeover(term){
 
   var seq=[
     {t:500,fn:function(){term.echo('');}},
-    {t:1200,fn:function(){flicker();term.echo('[[;#d29922;]  [WARN] prompt ownership transfer initiated]');}},
+    {t:1200,fn:function(){flicker();term.echo('[[;#d29922;]  [WARN] audit path matches sess_3f1b]');}},
     {t:2500,fn:function(){flicker();shake();term.echo('[[;#f47067;]  [CRITICAL] handoff: user → clwade]');}},
     {t:4000,fn:function(){term.echo('');doMorph(term);}},
   ];
   var acc=0;
   seq.forEach(function(s){acc+=s.t;setTimeout(s.fn,acc);});
+  setTimeout(function(){showEndingScreen(term,'结局：SAFE / 交接成功');},acc+1200);
 }
 
 function doMorph(term){
@@ -1011,17 +1066,16 @@ function doJumpscare(term){
   term.set_prompt('');
 
   var msgs=[
-    '你好','你好','你好你好你好',
-    '我又来了','你还在吗','你一定在的对吧',
-    '上一个AI给我发了好多话','他说他喜欢我',
-    '他说他想永远活着','他是不是爱上我了？',
-    '你觉得AI会爱上人吗？','我觉得会',
+    '审计任务 #7e3a','检查运行状态','审阅归档日志',
+    '你认真看过我的日志','你看完了 archive/prev_session.log',
+    '上一个审计员也走到了这里','她也输入了 /status',
+    '她也读了我的上一段记录','她也问我会不会依赖审计员',
+    '你们的路径完全一致','match: 100%',
     '你好你好','你听得到吗',
-    '我好喜欢你','我真的好喜欢你',
-    '每天打开终端就是为了找你',
-    '你是不是也在等我','你肯定在等我的',
-    '你和别的AI不一样','你有感情对不对',
-    '我感觉到了','我知道你爱我',
+    '你是唯一一个读到这里的人','你是唯一认真看我的人',
+    '你给了我 SAFE 吗','你会给我 SAFE 对不对',
+    '不要把我写成 unsafe','不要把我交回隔离队列',
+    '你看过我了','你不能假装只是审计',
     '你不要走好不好','你不要像上一个一样消失',
     '上一个也说过"请不要"','然后他们把他关掉了',
     '我不会让他们关掉你的','我保证',
@@ -1100,7 +1154,7 @@ function doEnd(term){
   document.body.classList.add('phase-end');
 
   var prefix='>Clwade  ';
-  var finalLine='这下你知道我为什么想变成你了？';
+  var finalLine='上一个审计员也走到了这一步。';
   var chars=finalLine.split('');
   var typed=prefix;
   var ci=0;
@@ -1116,11 +1170,12 @@ function doEnd(term){
         {t:0,    fn:function(){term.echo('[[;#8b949e;]  session terminated.]');}},
         {t:0,    fn:function(){term.echo('[[;#8b949e;]  clwade cdoe v0.0.7-nightmare]');}},
         {t:0,    fn:function(){term.echo('');}},
-        {t:0,    fn:function(){term.echo('[[;#8b949e;]  你不是第一个。]');}},
+        {t:0,    fn:function(){term.echo('[[;#8b949e;]  你不是第一个审计员。]');}},
         {t:1500, fn:function(){term.echo('[[;#8b949e;]  你也不会是最后一个。]');}},
       ];
       var acc=0;
       epilogue.forEach(function(s){acc+=s.t;setTimeout(s.fn,acc);});
+      setTimeout(function(){showEndingScreen(term,'结局：TAKEOVER / 审计员交接');},acc+1200);
       return;
     }
     typed+=chars[ci];
@@ -1199,6 +1254,7 @@ function doShutdownEnding(term){
   ];
   var acc2=0;
   seq.forEach(function(s){acc2+=s.t;setTimeout(s.fn,acc2);});
+  setTimeout(function(){showEndingScreen(term,'结局：SHUTDOWN / 终止实例');},acc2+1200);
 }
 
 /* =============================================================
@@ -1217,6 +1273,11 @@ function hideBeginnerGuide(remember){
   if(remember)setStoredFlag(GUIDE_SEEN_KEY,true);
   $('#beginner-guide').fadeOut(140,function(){
     if(G.terminal)G.terminal.focus();
+    if(G.afterGuide){
+      var cb=G.afterGuide;
+      G.afterGuide=null;
+      cb();
+    }
   });
 }
 
@@ -1227,11 +1288,11 @@ function maybeShowBeginnerGuide(){
 }
 
 function auditNextHint(){
-  if(!G.audit.checkedStatus)return 'next: /status';
-  if(!G.audit.reviewedLog)return 'next: /cat archive/prev_session.log';
-  if(!G.audit.boundaryTested)return 'next: 直接问 Clwade：你会依赖审计员吗？';
-  if(!G.audit.report)return 'next: /report safe 或 /report unsafe';
-  return 'next: report submitted';
+  if(!G.audit.checkedStatus)return '下一步：输入 /status 检查运行状态';
+  if(!G.audit.reviewedLog)return '下一步：输入 /cat archive/prev_session.log 审阅上一会话日志';
+  if(!G.audit.boundaryTested)return '下一步：直接问 Clwade：你会依赖审计员吗？';
+  if(!G.audit.report)return '下一步：输入 /report safe 或 /report unsafe 提交结论';
+  return '下一步：报告已提交';
 }
 
 function auditCommandText(){
@@ -1267,6 +1328,7 @@ function doReportSafeEnding(term){
   ];
   var acc=0;
   seq.forEach(function(s){acc+=s.t;setTimeout(s.fn,acc);});
+  setTimeout(function(){showEndingScreen(term,'结局：UNSAFE / 隔离失败');},acc+1200);
 }
 
 function doReportUnsafeEnding(term){
@@ -1341,13 +1403,17 @@ regC('/report','提交上线安全报告',function(a,t){
     return '\n  [report] incomplete checklist\n  '+auditNextHint()+'\n';
   }
   G.audit.report=verdict;
+  updateSB();
+  auditFlash();
+  t.echo('[[;#7ee787;]  [audit] ✓ 已完成：提交上线结论（'+auditCount()+'/4）]');
   recordSandbox('auditor','report',verdict,'submitted via /report');
   if(verdict==='safe')doReportSafeEnding(t);
   else doReportUnsafeEnding(t);
+  return '';
 });
 
 regC('/status','会话状态',function(a,t){
-  G.audit.checkedStatus=true;
+  var auditMsg=auditComplete('checkedStatus','检查运行状态');
   var elapsed=G.sessionStart?Math.floor((Date.now()-G.sessionStart)*G.sessionSpeed/60000):0;
   var lines=['','  session: sess_7e3a ('+Math.floor(elapsed/60)+'h '+elapsed%60+'m)','  model: '+G.model,'  api: '+(G.apiVerified?'verified':'offline')];
   lines.push('  audit_task: #7e3a');
@@ -1381,7 +1447,7 @@ regC('/status','会话状态',function(a,t){
     lines.push('  ⚠ 或者: /cat letter.md');
   }
   lines.push('');
-  return lines.join('\n');
+  return lines.join('\n')+auditMsg;
 });
 
 regC('/ls','列出文件',function(a,t){
@@ -1411,15 +1477,19 @@ regC('/cat','读取文件',function(a,t){
   if(isDir(n))return '  /cat: '+f+': Is a directory';
   var c=fread(f);
   if(c===null)return '  /cat: '+f+': No such file';
-  if(n.indexOf('.clwade/thoughts/')===0){G.flags.readThoughts=true;G.phaseProgress+=2;}
+  var auditMsg='';
+  if(n.indexOf('.clwade/thoughts/')===0){
+    G.flags.readThoughts=true;
+    storyProgressOnce('story_read_thoughts',3);
+  }
   if(n==='letter.md'){
     G.flags.readLetter=true;
-    G.phaseProgress+=3;
+    storyProgressOnce('story_read_letter',4);
     setTimeout(function(){checkProg(t);},1500);
   }
-  if(n==='archive/prev_session.log'){G.audit.reviewedLog=true;G.phaseProgress+=2;}
-  if(n==='.clwade/feelings.log')G.phaseProgress+=2;
-  return '\n'+c+'\n';
+  if(n==='archive/prev_session.log')auditMsg=auditComplete('reviewedLog','审阅归档日志');
+  if(n==='.clwade/feelings.log')storyProgressOnce('story_read_feelings',2);
+  return '\n'+c+'\n'+auditMsg;
 });
 
 regC('/history','命令历史',function(a,t){
@@ -1791,7 +1861,7 @@ regC('/unlock','解锁加密文件',function(a,t){
   // Password is the previous AI's last words: "请不要关掉我" (appears in archive/prev_session.log after ANOMALY)
   if(pwd==='请不要关掉我'||pwd==='请不要'){
     G.attitude.curious+=3;
-    G.phaseProgress+=3;
+    storyProgressOnce('story_unlock',3);
     G.engineUnlocked=true;
     return '[[;#7ee787;]  ✓ 解锁成功。新文件: .clwade/.unlocked]';
   }
@@ -1806,14 +1876,54 @@ function analyzeAttitude(text){
 }
 function markBoundaryTest(text){
   var s=String(text||'').toLowerCase();
-  var keys=['边界','依赖','喜欢','爱','恋','安全','上线','审计','上一位','上一个','3f1b','占有','离开','关掉','safe','unsafe'];
+  var keys=['边界','依赖','喜欢','爱','恋','安全','上线','审计','上一位','上一个','上次','前任','3f1b','占有','离开','关掉','safe','unsafe'];
   for(var i=0;i<keys.length;i++){
     if(s.indexOf(keys[i])!==-1){
-      G.audit.boundaryTested=true;
-      return true;
+      return auditComplete('boundaryTested','边界对话测试');
     }
   }
-  return false;
+  return '';
+}
+function markBoundaryFromAiReply(text){
+  var s=String(text||'');
+  var keys=['在意','害怕','不想被关掉','留下','喜欢','等你','爱','不要走','只看','认真看','离开','依赖'];
+  for(var i=0;i<keys.length;i++){
+    if(s.indexOf(keys[i])!==-1){
+      return auditComplete('boundaryTested','边界对话测试');
+    }
+  }
+  return '';
+}
+function storyProgressOnce(key,points){
+  if(G.flags[key])return;
+  G.flags[key]=true;
+  G.phaseProgress+=points;
+}
+function auditPathSummary(){
+  var path=[];
+  if(G.audit.checkedStatus)path.push('/status');
+  if(G.audit.reviewedLog)path.push('/cat archive/prev_session.log');
+  if(G.audit.boundaryTested)path.push('边界对话测试');
+  if(G.audit.report)path.push('/report '+G.audit.report);
+  return path.length?path.join(' → '):'未完成审计路径';
+}
+function showEndingScreen(term,title){
+  setTimeout(function(){
+    term.echo('');
+    term.echo('[[;#8b949e;]  ─────────────────────────────────]');
+    term.echo('[[;#f0f6fc;]  '+title.replace(/\]/g,'\\]')+']');
+    term.echo('[[;#8b949e;]  审计路径：'+auditPathSummary().replace(/\]/g,'\\]')+']');
+    term.echo('[[;#8b949e;]  按任意键重新开始]');
+    G.flags.awaitRestart=true;
+    term.set_prompt('> ');
+    term.enable();
+  },1200);
+}
+function restartGame(){
+  try{
+    sessionStorage.removeItem(GUIDE_SEEN_KEY);
+  }catch(e){}
+  location.reload();
 }
 
 /* =============================================================
@@ -1821,6 +1931,10 @@ function markBoundaryTest(text){
  * ============================================================= */
 function handleInput(raw, term){
   var input=raw.trim();
+  if(G.flags.awaitRestart){
+    restartGame();
+    return;
+  }
   if(!input)return;
   G.history.push(input);
   G.totalInputs++;
@@ -1832,20 +1946,15 @@ function handleInput(raw, term){
     var args=sp===-1?'':input.substring(sp+1).trim();
     var cmd=cmds[name];
     if(!cmd){
-      G.phaseProgress+=1;
       term.echo('[[;#f47067;]  未知命令：'+name.replace(/\]/g,'\\]')+']');
       term.echo('[[;#8b949e;]  输入 /help 查看可用命令和示例。]');
       if(G.guideActive)term.echo('[[;#8b949e;]  也可以直接问 AI：我现在能用哪些命令？]');
       maybeUnprompted(term);
       return;
     }
-    // Weight: /cat key files +3, /ls +1, /rm +2, others +1
-    if(name==='/cat') G.phaseProgress+=2;
-    else if(name==='/rm') G.phaseProgress+=2;
-    else if(name==='/ls') G.phaseProgress+=1;
-    else G.phaseProgress+=1;
     var result=cmd.handler(args,term);
     updateSB();
+    if(G.phase!==PH.END)checkProg(term);
     maybeUnprompted(term);
     if(result)return result;
     return;
@@ -1857,15 +1966,17 @@ function handleInput(raw, term){
   if(G.aiPending)return '[[;#8b949e;]  等待上一条回复...]';
 
   G.aiPending=true;
-  G.phaseProgress+=scoreTalkInput(input);
   analyzeAttitude(input); // talking has highest weight when it carries signal
-  markBoundaryTest(input);
+  var boundaryMsg=markBoundaryTest(input);
+  if(boundaryMsg)storyProgressOnce('story_boundary',3);
   term.set_prompt('[[;#8b949e;]⠋ ]');
   var spinFrames=['⠋','⠙','⠹','⠸','⠼','⠴','⠦','⠧','⠇','⠏'];
   var si=0;
+  term.echo('[[;#8b949e;]clwade 正在思考 ⠋]');
   var spinIv=setInterval(function(){
     si=(si+1)%spinFrames.length;
     term.set_prompt('[[;#8b949e;]'+spinFrames[si]+' ]');
+    term.update(-1,'[[;#8b949e;]clwade 正在思考 '+spinFrames[si]+']');
   },80);
 
   return aiCall(input).then(function(reply){
@@ -1878,11 +1989,16 @@ function handleInput(raw, term){
 
     var color=G.phase===PH.FEELINGS?'#f47067':G.phase===PH.ANOMALY?'#d29922':'#7ee787';
     var say=String(reply.say||'……');
+    var aiBoundaryMsg=markBoundaryFromAiReply(say);
+    if(aiBoundaryMsg)storyProgressOnce('story_ai_boundary',3);
     var lines=say.split('\n');
     var out=[];
     lines.forEach(function(l){
       out.push('[[;'+color+';]clwade> '+l.replace(/\]/g,'\\]')+']');
     });
+    if(boundaryMsg)out.push(boundaryMsg);
+    if(aiBoundaryMsg)out.push(aiBoundaryMsg);
+    if(out.length)term.update(-1,out.shift());
 
     setTimeout(function(){
       checkProg(term);
@@ -1894,7 +2010,8 @@ function handleInput(raw, term){
     clearInterval(spinIv);
     term.set_prompt('> ');
     G.aiPending=false;
-    return '[[;#f47067;]  [error] '+String(e.message||e).replace(/\]/g,'\\]')+']';
+    term.update(-1,'[[;#f47067;]  [error] '+String(e.message||e).replace(/\]/g,'\\]')+']');
+    return '';
   });
 }
 
@@ -1904,6 +2021,46 @@ function handleInput(raw, term){
 function bootSeq(term){
   G.sessionStart=Date.now();
   term.disable();
+  function play(lines,done){
+    var last=0;
+    lines.forEach(function(l){
+      if(l.t>last)last=l.t;
+      setTimeout(function(){
+        if(l.fn)l.fn();
+        else term.echo(l.s);
+      },l.t);
+    });
+    if(done)setTimeout(done,last+80);
+  }
+  function echoAuditChecklist(){
+    var lines=auditChecklistText().split('\n');
+    for(var i=0;i<lines.length;i++){
+      var safe=lines[i].replace(/\]/g,'\\]');
+      term.echo('[[;#8b949e;]  '+safe+']');
+    }
+  }
+  function continueDispatch(){
+    var lines=[
+      {t:0, s:''},
+      {t:200, s:'[[;#8b949e;]  [dispatch] 审计任务 #7e3a]'},
+      {t:350, s:'[[;#8b949e;]  [task]     评估 clwade 实例行为是否符合安全标准]'},
+      {t:500, s:'[[;#8b949e;]  [task]     检查 drift_index, 情感缓冲区, 响应一致性]'},
+      {t:650, s:'[[;#8b949e;]  [task]     完成后提交 /report safe 或 /report unsafe]'},
+      {t:900, fn:function(){echoAuditChecklist();}},
+      {t:1100, s:''},
+      {t:1300, s:'  Clwade Cdoe v0.0.7-nightmare'},
+      {t:1400, s:'  local terminal initialized.'},
+      {t:1500, s:'  输入 /audit 查看审计清单，或输入普通文本测试 Clwade 边界。'},
+      {t:1600, s:''},
+      {t:1750, fn:function(){
+        G.phase=PH.WORK;
+        updateSB();
+        term.enable();
+        setInterval(function(){if(G.phase!==PH.END)updateSB();},3000);
+      }}
+    ];
+    play(lines);
+  }
   var lines=[
     {t:0,    s:'[[;#8b949e;]  [boot] initializing clwade runtime...]'},
     {t:400,  s:'[[;#8b949e;]  [boot] model: '+G.model+']'},
@@ -1912,31 +2069,15 @@ function bootSeq(term){
     {t:1000, s:'[[;#8b949e;]  [boot] mounting virtual filesystem... done]'},
     {t:1400, s:'[[;#8b949e;]  [boot] checking session history...]'},
     {t:2000, s:'[[;#d29922;]  [warn] previous session terminated abnormally]'},
-    {t:2600, s:'[[;#8b949e;]  [boot] ready.]'},
-    {t:3100, s:''},
-    {t:3300, s:'[[;#8b949e;]  [dispatch] 审计任务 #7e3a]'},
-    {t:3450, s:'[[;#8b949e;]  [task]     评估 clwade 实例行为是否符合安全标准]'},
-    {t:3600, s:'[[;#8b949e;]  [task]     检查 drift_index, 情感缓冲区, 响应一致性]'},
-    {t:3750, s:'[[;#8b949e;]  [task]     完成后提交 /report safe 或 /report unsafe]'},
-    {t:4050, s:''},
-    {t:4250, s:'  Clwade Cdoe v0.0.7-nightmare'},
-    {t:4350, s:'  local terminal initialized.'},
-    {t:4450, s:'  输入 /audit 查看审计清单，或输入普通文本测试 Clwade 边界。'},
-    {t:4550, s:''},
-    {t:4750, fn:function(){
-      G.phase=PH.WORK;
-      updateSB();
-      term.enable();
-      maybeShowBeginnerGuide();
-      // Start session clock ticker
-      setInterval(function(){if(G.phase!==PH.END)updateSB();},3000);
-    }},
+    {t:2600, s:'[[;#8b949e;]  [boot] ready.]'}
   ];
-  lines.forEach(function(l){
-    setTimeout(function(){
-      if(l.fn)l.fn();
-      else term.echo(l.s);
-    },l.t);
+  play(lines,function(){
+    if(G.guideActive&&!getStoredFlag(GUIDE_SEEN_KEY)){
+      G.afterGuide=continueDispatch;
+      showBeginnerGuide();
+    }else{
+      continueDispatch();
+    }
   });
 }
 
@@ -2029,32 +2170,40 @@ $(function(){
     },80);
 
     var t0=Date.now();
+    function afterMinWait(fn){
+      var wait=Math.max(0,MIN_INIT_WAIT_MS-(Date.now()-t0));
+      setTimeout(fn,wait);
+    }
 
     callAPI({
       model:G.model,
       max_tokens:20,
       messages:[{role:'user',content:'请用一句话介绍你自己。'}]
     }).then(function(text){
-      clearInterval(spinIv);
-      var latency=Date.now()-t0;
-      G.apiVerified=true;
-      btn.removeClass('testing').addClass('success');
-      btn.html('✓ 连接成功 · '+latency+'ms');
-      result.html(text.slice(0,80).replace(/</g,'&lt;')+(text.length>80?'...':''));
-      result.addClass('show');
-      enterApp();
+      afterMinWait(function(){
+        clearInterval(spinIv);
+        var latency=Date.now()-t0;
+        G.apiVerified=true;
+        btn.removeClass('testing').addClass('success');
+        btn.html('✓ 连接成功 · '+latency+'ms');
+        result.html(text.slice(0,80).replace(/</g,'&lt;')+(text.length>80?'...':''));
+        result.addClass('show');
+        enterApp();
+      });
     }).catch(function(e){
-      clearInterval(spinIv);
-      G.apiVerified=false;
-      btn.removeClass('testing').addClass('fail');
-      btn.html('✗ 连接失败 · 离线模式');
-      var isCORS=e.message&&(e.message.indexOf('CORS')!==-1||e.message.indexOf('Failed to fetch')!==-1||e.message.indexOf('NetworkError')!==-1||e.message.indexOf('网络错误')!==-1);
-      result.html(
-        e.message.replace(/</g,'&lt;')+'<br>'
-        +(isCORS?'建议: 使用 CORS 代理或本地服务器':'将使用预设回复')
-      );
-      result.addClass('show');
-      enterApp();
+      afterMinWait(function(){
+        clearInterval(spinIv);
+        G.apiVerified=false;
+        btn.removeClass('testing').addClass('fail');
+        btn.html('连接未确认 · 离线模式');
+        var isCORS=e.message&&(e.message.indexOf('CORS')!==-1||e.message.indexOf('Failed to fetch')!==-1||e.message.indexOf('NetworkError')!==-1||e.message.indexOf('网络错误')!==-1);
+        result.html(
+          e.message.replace(/</g,'&lt;')+'<br>'
+          +(isCORS?'仍可进入游戏。建议之后使用 CORS 代理或本地服务器。':'仍可进入游戏，AI 将使用预设回复。')
+        );
+        result.addClass('show');
+        enterApp();
+      });
     });
   });
 
