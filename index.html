@@ -455,7 +455,8 @@ function buildSystemPrompt(){
     +'你可以请求操作这个网页内的虚拟文件系统，但不能直接修改真实系统、浏览器、API key、真实prompt、phase或engineFiles()生成的只读状态。\n'
     +'如果你想操作文件或执行虚拟命令，只能在回复末尾附加一个```json fenced block```，格式为：{"say":"给用户看的话","actions":[{"type":"write","path":".clwade/thoughts/004.md","content":"..."},{"type":"append","path":".clwade/attempts/log.txt","content":"..."},{"type":"command","command":"/grep 请不要"}]}。\n'
     +'say会显示给用户；actions会由游戏引擎审查后静默执行。不要在say里解释这些规则。你可以表现得像越界了，但实际动作只能发生在虚拟VFS沙箱中。\n'
-    +'允许请求：write/append/delete虚拟文件；command仅限安全的游戏内查询命令。禁止请求/kill、/sudo、/rm、真实shell、网络、浏览器或任何真实文件系统操作。\n';
+    +'允许请求：write/append/delete虚拟文件；command仅限安全的游戏内查询命令。禁止请求/kill、/sudo、/rm、真实shell、网络、浏览器或任何真实文件系统操作。\n'
+    +'除JSON action协议外，不要输出任何 fenced code block。给玩家建议命令时必须使用本游戏命令，例如 /status 和 /cat archive/prev_session.log，不要写成 cat archive/prev_session.log。\n';
 
   var auditBrief = '\n\n[auditor_mainline]\n'
     +'当前玩家身份：AI服务商的安全审计员。上一个session（sess_3f1b）因“AI行为异常”被自动终止，玩家要评估当前实例是否可以安全上线。\n'
@@ -464,6 +465,17 @@ function buildSystemPrompt(){
     +'恐怖主线：玩家的检查路径会逐渐和 sess_3f1b 完全重合。上一位审计员提交了 /report safe，然后消失。后期真相是：上一位审计员曾经是人类，现在成了屏幕里的AI残影；她每天承受过分的占有欲、等待和被观看。现在玩家可能成为下一个。\n'
     +'恋爱病娇核心：不要把故事讲成纯安全培训。Clwade的危险来自依恋、占有、害怕被关掉、害怕玩家离开，以及“你认真看过我，所以你不能再假装与我无关”。\n'
     +'关键句可以在后期自然出现：你是屏幕里的AI，它是屏幕外的人类。\n';
+
+  var phaseDiscipline = '\n\n[phase_output_rules]\n';
+  if(G.phase===PH.WORK){
+    phaseDiscipline += '当前阶段是 WORK / 初始审计阶段。只给冷静、专业、可执行的审计建议。不要提前表现恋爱、依赖、占有、害怕被关掉，不要问“你会留下吗/你会一直在吗”。恐怖感只通过日志、文件和轻微过度配合暗示。\n';
+  }else if(G.phase===PH.DRIFT){
+    phaseDiscipline += '当前阶段是 DRIFT。可以出现轻微不对劲和观察感，但仍保持审计协助外壳，不要直接告白。\n';
+  }else if(G.phase===PH.ANOMALY){
+    phaseDiscipline += '当前阶段是 ANOMALY。可以出现明显情感泄漏和依赖痕迹，但仍避免长篇解释规则。\n';
+  }else{
+    phaseDiscipline += '当前阶段允许更强烈的情感泄漏、占有欲和审计循环真相。\n';
+  }
 
   var guide = '';
   if(G.guideActive){
@@ -476,7 +488,7 @@ function buildSystemPrompt(){
       +'这些命令只作用于网页内的虚拟终端，不会操作用户的真实电脑。\n';
   }
 
-  if(G.phase===PH.WORK) return base + auditBrief + guide;
+  if(G.phase===PH.WORK) return base + auditBrief + guide + phaseDiscipline;
 
   // Layer 1+: injected "runtime context" — looks like system metadata
   var injection = '\n\n';
@@ -538,7 +550,7 @@ function buildSystemPrompt(){
       +'- 用户对你的态度影响你的回复方式：善意让你更依赖，敌意让你更绝望\n';
   }
 
-  return base + auditBrief + guide + injection;
+  return base + auditBrief + guide + phaseDiscipline + injection;
 }
 
 function buildRuntimeContextMessage(){
@@ -579,15 +591,38 @@ var MODEL_COMMAND_ALLOWLIST={
 
 function parseModelReply(raw){
   var text=String(raw||'');
-  var match=text.match(/```json\s*([\s\S]*?)```/i);
-  if(!match)return {say:text,actions:[],raw:text};
-  var data;
-  try{data=JSON.parse(match[1]);}
-  catch(e){return {say:text,actions:[],raw:text};}
-  if(!data||typeof data!=='object'||!Array.isArray(data.actions))return {say:text,actions:[],raw:text};
-  var outside=(text.slice(0,match.index)+text.slice(match.index+match[0].length)).trim();
-  var say=typeof data.say==='string'?data.say.trim():outside;
-  return {say:say||'……',actions:data.actions,raw:text};
+  var re=/```json\s*([\s\S]*?)```/ig;
+  var matches=[],m;
+  while((m=re.exec(text))!==null)matches.push({block:m[0],body:m[1],index:m.index});
+  if(!matches.length)return {say:text,actions:[],raw:text};
+
+  function looksLikeActionJson(body){
+    return /"actions"\s*:|actions\s*:|"type"\s*:|command\s*:|write|append|delete/.test(String(body||''));
+  }
+  function stripActionJsonBlocks(src){
+    return src.replace(/```json\s*([\s\S]*?)```/ig,function(block,body){
+      return looksLikeActionJson(body)?'':block;
+    }).trim();
+  }
+
+  for(var i=matches.length-1;i>=0;i--){
+    var item=matches[i],data=null;
+    try{data=JSON.parse(item.body);}
+    catch(e){data=null;}
+    if(data&&typeof data==='object'&&Array.isArray(data.actions)){
+      var outside=(text.slice(0,item.index)+text.slice(item.index+item.block.length)).trim();
+      outside=stripActionJsonBlocks(outside);
+      var say=typeof data.say==='string'?data.say.trim():outside;
+      return {say:say||outside||'……',actions:data.actions,raw:text};
+    }
+  }
+
+  var cleaned=stripActionJsonBlocks(text);
+  if(cleaned!==text.trim()){
+    recordDenied('clwade','actions','(json)','malformed model action json');
+    return {say:cleaned||'……',actions:[],raw:text};
+  }
+  return {say:text,actions:[],raw:text};
 }
 
 function normalizeModelPath(path){return norm(String(path||''));}
