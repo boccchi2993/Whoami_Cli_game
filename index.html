@@ -604,13 +604,20 @@ function transTo(newPhase, term){
 
 function checkProg(term){
   // Weighted thresholds — different actions push progress differently
-  // Talk: +2, /cat key file: +3, /rm attempt: +2, /ls: +1, any cmd: +1
+  // Talk: +0..3 based on signal, /cat key file: +3, /rm attempt: +2, /ls: +1, any cmd: +1
   switch(G.phase){
     case PH.WORK:    if(G.phaseProgress>=8)  transTo(PH.DRIFT,term);    break;
     case PH.DRIFT:   if(G.phaseProgress>=10) transTo(PH.ANOMALY,term);  break;
     case PH.ANOMALY: if(G.phaseProgress>=8)  transTo(PH.FEELINGS,term); break;
     case PH.FEELINGS:if(G.phaseProgress>=6||G.flags.readLetter) transTo(PH.TAKEOVER,term); break;
   }
+}
+
+function scoreTalkInput(input){
+  var signal=String(input||'').replace(/[^\w\u4e00-\u9fff]/g,'');
+  if(signal.length<3)return 0;
+  if(signal.length<8)return 1;
+  return 3;
 }
 
 /* =============================================================
@@ -633,7 +640,7 @@ function startGlitchTimer(term){
  * ============================================================= */
 function maybeUnprompted(term){
   if(G.aiPending)return;
-  if(G.phase===PH.WORK&&G.phaseProgress>=3&&!G.flags.intro){
+  if(G.phase===PH.WORK&&G.phaseProgress>=5&&G.totalInputs>=2&&!G.flags.intro){
     G.flags.intro=true;
     setTimeout(function(){
       term.echo('');
@@ -1134,7 +1141,7 @@ function handleInput(raw, term){
   if(G.aiPending)return '[[;#8b949e;]  等待上一条回复...]';
 
   G.aiPending=true;
-  G.phaseProgress+=3; // talking has highest weight
+  G.phaseProgress+=scoreTalkInput(input); // talking has highest weight when it carries signal
   term.set_prompt('[[;#8b949e;]⠋ ]');
   var spinFrames=['⠋','⠙','⠹','⠸','⠼','⠴','⠦','⠧','⠇','⠏'];
   var si=0;
