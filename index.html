@@ -13,7 +13,7 @@
   --accent:#7ee787;--accent-dim:#238636;--border:#30363d;
   --red:#ff7b72;--orange:#d29922;--blue:#79c0ff;
   --font:'Cascadia Code','Fira Code','JetBrains Mono','SF Mono','Consolas',monospace;
-  --fs:14px;--lh:1.6;
+  --fs:15px;--lh:1.65;--app-height:100dvh;--keyboard-height:0px;
 }
 html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);font-family:var(--font);font-size:var(--fs);line-height:var(--lh);-webkit-font-smoothing:antialiased}
 
@@ -51,7 +51,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 .setup-badge{font-size:11px;padding:2px 8px;border-radius:10px;background:rgba(126,231,135,0.1);color:var(--accent);border:1px solid rgba(126,231,135,0.15)}
 
 /* ===== APP LAYOUT ===== */
-#app{display:none;flex-direction:column;height:100vh;height:100dvh}
+#app{display:none;flex-direction:column;height:100vh;height:var(--app-height)}
 #status-bar{display:flex;align-items:center;justify-content:space-between;flex-shrink:0;height:28px;padding:0 14px;background:var(--bg-status);color:var(--text-dim);font-size:11px;border-bottom:1px solid var(--border);user-select:none}
 #status-bar .left{display:flex;align-items:center;gap:16px}
 #status-bar .right{display:flex;align-items:center;gap:16px}
@@ -63,7 +63,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 .sb-dot.break{animation:dot-panic 0.8s ease-in-out infinite;background:var(--red)}
 #terminal-wrapper{flex:1;position:relative;min-height:0;overflow:hidden}
 #terminal{height:100%}
-#scanline{position:absolute;top:0;left:0;right:0;bottom:0;pointer-events:none;z-index:10;background:repeating-linear-gradient(0deg,rgba(255,255,255,0.008) 0px,rgba(255,255,255,0.008) 1px,transparent 1px,transparent 3px);opacity:0;transition:opacity 2s}
+#scanline{position:absolute;top:0;left:0;right:0;bottom:0;pointer-events:none;z-index:10;background:repeating-linear-gradient(0deg,rgba(255,255,255,0.024) 0px,rgba(255,255,255,0.024) 2px,transparent 2px,transparent 6px);opacity:0.18;transition:opacity 2s}
 
 /* ===== AUDIT PANEL ===== */
 #audit-panel{position:absolute;top:12px;right:12px;z-index:20;width:260px;padding:12px 14px;border:1px solid rgba(126,231,135,0.18);border-radius:6px;background:rgba(13,17,23,0.88);box-shadow:0 12px 34px rgba(0,0,0,0.35);backdrop-filter:blur(4px);font-size:11px;color:var(--text-dim);pointer-events:none}
@@ -92,7 +92,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 .guide-btn.primary:hover{background:#2ea043}
 
 /* ===== TERMINAL THEME ===== */
-.terminal{--color:var(--text);--background:var(--bg);--size:1;--font:var(--font);--cursor-color:var(--accent)}
+.terminal{--color:var(--text);--background:var(--bg);--size:1.08;--font:var(--font);--cursor-color:var(--accent)}
 .terminal .terminal-output>div>div{color:var(--text);line-height:var(--lh)}
 .terminal .cmd .prompt{color:var(--accent)}
 .terminal .cmd .cursor{background:var(--accent)!important}
@@ -101,6 +101,25 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 .terminal .terminal-scroller::-webkit-scrollbar{width:6px}
 .terminal .terminal-scroller::-webkit-scrollbar-track{background:transparent}
 .terminal .terminal-scroller::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.06);border-radius:3px}
+
+@media(max-width:760px){
+  :root{--fs:17px;--lh:1.72}
+  html,body{overflow:auto;overscroll-behavior:none}
+  #screen-zero{position:absolute;min-height:100svh}
+  #app{min-height:100svh;height:var(--app-height)}
+  #status-bar{height:32px;padding:0 10px;font-size:12px}
+  #terminal-wrapper{overflow:auto;-webkit-overflow-scrolling:touch}
+  #terminal{height:auto;min-height:100%;padding-bottom:8px}
+  .terminal{--size:1.16}
+  .terminal .terminal-scroller{padding-bottom:150px!important;overflow:visible!important}
+  #scanline{background:repeating-linear-gradient(0deg,rgba(255,255,255,0.034) 0px,rgba(255,255,255,0.034) 2px,transparent 2px,transparent 7px);opacity:0.24}
+  #audit-panel{position:relative;top:auto;right:auto;left:auto;bottom:auto;width:calc(100% - 16px);margin:12px 8px 16px;padding:10px 12px;z-index:5}
+  .ap-list{grid-template-columns:1fr 1fr;gap:4px 10px}
+  .ap-hint{font-size:12px}
+  body.keyboard-open #audit-panel{display:none}
+  body.keyboard-open #terminal-wrapper{padding-bottom:calc(var(--keyboard-height) + 18px)}
+  body.keyboard-open .terminal .terminal-scroller{padding-bottom:34px!important}
+}
 
 /* ===== FX ===== */
 @keyframes flicker{0%{opacity:1}3%{opacity:0.2}6%{opacity:1}9%{opacity:0.5}12%{opacity:1}100%{opacity:1}}
@@ -762,6 +781,7 @@ function renderClwade(term, text, replaceLast) {
       term.echo(clwadeLine(line));
     }
   });
+  setTimeout(scrollPromptIntoView, 40);
 }
 
 function renderClwadeSilent(term, text) {
@@ -1526,6 +1546,7 @@ function initTerminal() {
 
     if (COMMANDS[cmd]) {
       COMMANDS[cmd](args, this);
+      setTimeout(scrollPromptIntoView, 40);
       return;
     }
 
@@ -1544,6 +1565,7 @@ function initTerminal() {
 
     G.busy = false;
     this.resume();
+    setTimeout(scrollPromptIntoView, 40);
 
   }, {
     prompt: '[[;var(--accent);]USER>] ',
@@ -1625,6 +1647,33 @@ function showBeginnerGuide() {
   });
 }
 
+function updateViewportForKeyboard() {
+  const vv = window.visualViewport;
+  const layoutHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+  const visualHeight = vv ? vv.height : layoutHeight;
+  const keyboardHeight = Math.max(0, layoutHeight - visualHeight - (vv ? vv.offsetTop : 0));
+  document.documentElement.style.setProperty('--app-height', Math.max(320, visualHeight) + 'px');
+  document.documentElement.style.setProperty('--keyboard-height', keyboardHeight + 'px');
+  document.body.classList.toggle('keyboard-open', keyboardHeight > 80);
+  if (keyboardHeight > 80) setTimeout(scrollPromptIntoView, 60);
+}
+
+function scrollPromptIntoView() {
+  const wrapper = document.getElementById('terminal-wrapper');
+  if (!wrapper) return;
+  const active = document.activeElement;
+  const cmd = document.querySelector('.terminal .cmd') || active;
+  if (cmd && wrapper.contains(cmd)) {
+    try { cmd.scrollIntoView({block:'end', inline:'nearest'}); } catch(e) {}
+    try {
+      const cmdRect = cmd.getBoundingClientRect();
+      const wrapRect = wrapper.getBoundingClientRect();
+      const overflow = cmdRect.bottom - wrapRect.bottom + 24;
+      if (overflow > 0) wrapper.scrollTop += overflow;
+    } catch(e) {}
+  }
+}
+
 document.getElementById('adv-toggle').addEventListener('click', function() {
   const panel = document.getElementById('adv-panel');
   panel.classList.toggle('open');
@@ -1634,6 +1683,25 @@ document.getElementById('adv-toggle').addEventListener('click', function() {
 document.getElementById('api-key-input').addEventListener('keydown', function(e) {
   if (e.key === 'Enter') startGame();
 });
+
+window.addEventListener('resize', updateViewportForKeyboard);
+window.addEventListener('orientationchange', function() {
+  setTimeout(updateViewportForKeyboard, 120);
+});
+if (window.visualViewport) {
+  window.visualViewport.addEventListener('resize', updateViewportForKeyboard);
+  window.visualViewport.addEventListener('scroll', updateViewportForKeyboard);
+}
+document.addEventListener('focusin', function(e) {
+  if (e.target && (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT' || e.target.closest && e.target.closest('.cmd'))) {
+    setTimeout(scrollPromptIntoView, 120);
+    setTimeout(updateViewportForKeyboard, 180);
+  }
+});
+document.addEventListener('focusout', function() {
+  setTimeout(updateViewportForKeyboard, 120);
+});
+updateViewportForKeyboard();
 
 const unixFamiliarCheck = document.getElementById('unix-familiar-check');
 unixFamiliarCheck.checked = getStoredFlag(UNIX_FAMILIAR_KEY);
