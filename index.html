@@ -2092,6 +2092,8 @@ $(function(){
   var result=$('#init-result');
   var advToggle=$('#adv-toggle');
   var advPanel=$('#adv-panel');
+  var initReady=false;
+  var appStarted=false;
 
   unixCheck.prop('checked',getStoredFlag(UNIX_FAMILIAR_KEY));
 
@@ -2119,6 +2121,8 @@ $(function(){
   });
 
   function enterApp(){
+    if(appStarted)return;
+    appStarted=true;
     setTimeout(function(){
       $('#screen-zero').fadeOut(400,function(){
         $('#app').css('display','flex').hide().fadeIn(400,function(){
@@ -2146,7 +2150,12 @@ $(function(){
   }
 
   btn.on('click',function(){
-    if(!btn.hasClass('active')||btn.hasClass('testing'))return;
+    if(btn.hasClass('testing'))return;
+    if(initReady){
+      enterApp();
+      return;
+    }
+    if(!btn.hasClass('active'))return;
 
     G.apiKey=keyInput.val().trim();
     var base=$('#api-base-input').val().trim();
@@ -2174,35 +2183,57 @@ $(function(){
       var wait=Math.max(0,MIN_INIT_WAIT_MS-(Date.now()-t0));
       setTimeout(fn,wait);
     }
+    function withTimeout(promise,ms){
+      return new Promise(function(resolve,reject){
+        var done=false;
+        var timer=setTimeout(function(){
+          if(done)return;
+          done=true;
+          reject(new Error('连接测试超时'));
+        },ms);
+        promise.then(function(v){
+          if(done)return;
+          done=true;
+          clearTimeout(timer);
+          resolve(v);
+        }).catch(function(e){
+          if(done)return;
+          done=true;
+          clearTimeout(timer);
+          reject(e);
+        });
+      });
+    }
 
-    callAPI({
+    withTimeout(callAPI({
       model:G.model,
       max_tokens:20,
       messages:[{role:'user',content:'请用一句话介绍你自己。'}]
-    }).then(function(text){
+    }),8000).then(function(text){
       afterMinWait(function(){
         clearInterval(spinIv);
         var latency=Date.now()-t0;
         G.apiVerified=true;
-        btn.removeClass('testing').addClass('success');
-        btn.html('✓ 连接成功 · '+latency+'ms');
+        initReady=true;
+        btn.removeClass('testing').addClass('success active');
+        btn.html('开始游戏');
         result.html(text.slice(0,80).replace(/</g,'&lt;')+(text.length>80?'...':''));
         result.addClass('show');
-        enterApp();
       });
     }).catch(function(e){
       afterMinWait(function(){
         clearInterval(spinIv);
         G.apiVerified=false;
-        btn.removeClass('testing').addClass('fail');
-        btn.html('连接未确认 · 离线模式');
+        initReady=true;
+        btn.removeClass('testing').addClass('fail active');
+        btn.html('开始游戏');
         var isCORS=e.message&&(e.message.indexOf('CORS')!==-1||e.message.indexOf('Failed to fetch')!==-1||e.message.indexOf('NetworkError')!==-1||e.message.indexOf('网络错误')!==-1);
         result.html(
-          e.message.replace(/</g,'&lt;')+'<br>'
+          '连接未确认 · 离线模式<br>'
+          +e.message.replace(/</g,'&lt;')+'<br>'
           +(isCORS?'仍可进入游戏。建议之后使用 CORS 代理或本地服务器。':'仍可进入游戏，AI 将使用预设回复。')
         );
         result.addClass('show');
-        enterApp();
       });
     });
   });
