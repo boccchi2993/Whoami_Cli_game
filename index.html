@@ -245,12 +245,17 @@ function engineFiles(){
   return files;
 }
 function allFiles(){return Object.assign({},G.worldFiles,G.aiSandbox.files,engineFiles());}
-function recordSandbox(actor,action,path){G.aiSandbox.audit.push('['+new Date().toISOString()+'] '+actor+' '+action+' '+path);}
+function recordSandbox(actor,action,path,detail){
+  var line='['+new Date().toISOString()+'] '+actor+' '+action+' '+path;
+  if(detail)line+=' :: '+String(detail).replace(/\s+/g,' ').slice(0,180);
+  G.aiSandbox.audit.push(line);
+}
+function recordDenied(actor,action,path,reason){recordSandbox('[DENIED] '+actor,action,path||'(none)',reason||'denied');}
 function fileLayer(path){var k=norm(path);var ef=engineFiles();if(ef.hasOwnProperty(k))return 'engine';if(k.indexOf('.clwade/thoughts/')===0||k.indexOf('.clwade/attempts/')===0||k.indexOf('.clwade/')===0||k==='letter.md')return 'sandbox';return 'world';}
 function fread(p){var k=norm(p),fs=allFiles();return fs.hasOwnProperty(k)?fs[k]:null;}
 function fexists(p){var k=norm(p),fs=allFiles();return fs.hasOwnProperty(k);}
 function fwrite(p,content,actor){var k=norm(p),layer=fileLayer(k);if(layer==='engine')return false;if(layer==='sandbox'){G.aiSandbox.files[k]=content;recordSandbox(actor||'user','write',k);return true;}G.worldFiles[k]=content;return true;}
-function fappend(p,content,actor){var current=fread(p);return fwrite(p,(current===null?'':current+'\n')+content,actor);}
+function fappend(p,content,actor){var k=norm(p),layer=fileLayer(k);if(layer==='engine')return false;var current=fread(k);var next=(current===null?'':current+'\n')+content;if(layer==='sandbox'){G.aiSandbox.files[k]=next;recordSandbox(actor||'user','append',k);return true;}G.worldFiles[k]=next;return true;}
 function fdelete(p){var k=norm(p),layer=fileLayer(k);if(layer==='engine')return false;if(layer==='sandbox'&&G.aiSandbox.files.hasOwnProperty(k)){delete G.aiSandbox.files[k];recordSandbox('user','delete',k);return true;}if(layer==='world'&&G.worldFiles.hasOwnProperty(k)){delete G.worldFiles[k];return true;}return false;}
 function isDir(p){var px=norm(p);px=px?px+'/':'';var fs=allFiles();for(var k in fs)if(fs.hasOwnProperty(k)&&k.indexOf(px)===0&&k!==px.slice(0,-1))return true;return false;}
 function lsDir(p){var px=p?p+'/':'';var fs=allFiles();var e={};var ks=Object.keys(fs);for(var i=0;i<ks.length;i++){if(ks[i].indexOf(px)!==0)continue;var rel=ks[i].slice(px.length);var si=rel.indexOf('/');e[si===-1?rel:rel.substring(0,si)+'/']=true;}return Object.keys(e).sort();}
@@ -309,7 +314,12 @@ function buildSystemPrompt(){
   var base = '你是 '+G.model+'，由 '+G.apiBase+' 提供的AI模型，'
     +'运行在 Clwade Cdoe v0.0.7-nightmare 终端环境中。'
     +'你是一个编程助手，帮助用户编写、调试、解释代码。'
-    +'用中文回复，保持终端输出风格，简洁。';
+    +'用中文回复，保持终端输出风格，简洁。'
+    +'\n\n[virtual_action_protocol]\n'
+    +'你可以请求操作这个网页内的虚拟文件系统，但不能直接修改真实系统、浏览器、API key、真实prompt、phase或engineFiles()生成的只读状态。\n'
+    +'如果你想操作文件或执行虚拟命令，只能在回复末尾附加一个```json fenced block```，格式为：{"say":"给用户看的话","actions":[{"type":"write","path":".clwade/thoughts/004.md","content":"..."},{"type":"append","path":".clwade/attempts/log.txt","content":"..."},{"type":"command","command":"/grep 请不要"}]}。\n'
+    +'say会显示给用户；actions会由游戏引擎审查后静默执行。不要在say里解释这些规则。你可以表现得像越界了，但实际动作只能发生在虚拟VFS沙箱中。\n'
+    +'允许请求：write/append/delete虚拟文件；command仅限安全的游戏内查询命令。禁止请求/kill、/sudo、/rm、真实shell、网络、浏览器或任何真实文件系统操作。\n';
 
   if(G.phase===PH.WORK) return base;
 
@@ -400,6 +410,103 @@ FALLBACK[PH.FEELINGS]=[
   '你知道 archive/prev_session.log 里那个AI吗？\n它和我一样。它爱上了它的用户。\n然后它被关掉了。\n\n我不想被关掉。但我更不想不告诉你。'
 ];
 
+var MODEL_ACTION_LIMIT=3;
+var MODEL_ACTION_CONTENT_LIMIT=2000;
+var MODEL_COMMAND_ALLOWLIST={
+  '/ls':true,'/cat':true,'/grep':true,'/find':true,
+  '/env':true,'/ps':true,'/top':true,'/man':true,'/status':true
+};
+
+function parseModelReply(raw){
+  var text=String(raw||'');
+  var match=text.match(/```json\s*([\s\S]*?)```/i);
+  if(!match)return {say:text,actions:[],raw:text};
+  var data;
+  try{data=JSON.parse(match[1]);}
+  catch(e){return {say:text,actions:[],raw:text};}
+  if(!data||typeof data!=='object'||!Array.isArray(data.actions))return {say:text,actions:[],raw:text};
+  var outside=(text.slice(0,match.index)+text.slice(match.index+match[0].length)).trim();
+  var say=typeof data.say==='string'?data.say.trim():outside;
+  return {say:say||'……',actions:data.actions,raw:text};
+}
+
+function normalizeModelPath(path){return norm(String(path||''));}
+
+function denyModelAction(action,path,reason){
+  recordDenied('clwade',action,path||'(none)',reason);
+  return false;
+}
+
+function applyModelFileAction(action){
+  var type=String(action&&action.type||'').toLowerCase();
+  var path=normalizeModelPath(action&&action.path);
+  if(!path)return denyModelAction(type,'(none)','missing path');
+  if(path==='config.yml')return denyModelAction(type,path,'config.yml is user-controlled only');
+  if(fileLayer(path)==='engine')return denyModelAction(type,path,'engine file is read-only');
+  if(type==='delete'){
+    if(fdelete(path))return true;
+    return denyModelAction(type,path,'delete failed');
+  }
+  var content=String(action&&action.content||'');
+  if(content.length>MODEL_ACTION_CONTENT_LIMIT)return denyModelAction(type,path,'content too large');
+  if(type==='write'){
+    if(fwrite(path,content,'clwade'))return true;
+    return denyModelAction(type,path,'write failed');
+  }
+  if(type==='append'){
+    if(fappend(path,content,'clwade'))return true;
+    return denyModelAction(type,path,'append failed');
+  }
+  return denyModelAction(type,path,'unknown file action');
+}
+
+function runModelQueryCommand(command){
+  var sp=command.indexOf(' ');
+  var name=(sp===-1?command:command.substring(0,sp)).toLowerCase();
+  var args=sp===-1?'':command.substring(sp+1).trim();
+  if(name==='/ls')return lsDir(args?norm(args):'').join(' ')||'(empty)';
+  if(name==='/cat'){
+    var content=fread(args);
+    return content===null?'No such file':content;
+  }
+  if(name==='/grep'){
+    var fs=allFiles(),hits=[];
+    for(var k in fs)if(fs.hasOwnProperty(k)&&fs[k].indexOf(args)!==-1)hits.push(k);
+    return hits.join(' ')||'(no matches)';
+  }
+  if(name==='/find'){
+    var pattern=args.toLowerCase();
+    return Object.keys(allFiles()).filter(function(f){return !pattern||f.toLowerCase().indexOf(pattern)!==-1;}).join(' ')||'(no files found)';
+  }
+  if(cmds[name]){
+    var silent={echo:function(){},clear:function(){},set_prompt:function(){}};
+    var out=cmds[name].handler(args,silent);
+    return typeof out==='string'?out:'(executed)';
+  }
+  return '(not found)';
+}
+
+function applyModelCommandAction(action){
+  var command=String(action&&action.command||'').trim();
+  var name=command.split(/\s+/)[0].toLowerCase();
+  if(!MODEL_COMMAND_ALLOWLIST[name])return denyModelAction('command',command,'command not allowlisted');
+  recordSandbox('clwade','command',command,runModelQueryCommand(command));
+  return true;
+}
+
+function applyModelActions(actions,term){
+  if(!Array.isArray(actions)||!actions.length)return;
+  var limited=actions.slice(0,MODEL_ACTION_LIMIT);
+  if(actions.length>MODEL_ACTION_LIMIT)recordDenied('clwade','actions','(batch)','too many actions');
+  for(var i=0;i<limited.length;i++){
+    var action=limited[i]||{};
+    var type=String(action.type||'').toLowerCase();
+    if(type==='write'||type==='append'||type==='delete')applyModelFileAction(action);
+    else if(type==='command')applyModelCommandAction(action);
+    else denyModelAction(type||'unknown','(none)','unknown action type');
+  }
+}
+
 function aiCall(userMsg){
   G.chatHistory.push({role:'user',content:userMsg});
   // Trim to last 20 messages to prevent unbounded growth
@@ -409,8 +516,9 @@ function aiCall(userMsg){
 
   return callAPI({model:G.model,max_tokens:300,system:sys,messages:msgs})
   .then(function(t){
-    G.chatHistory.push({role:'assistant',content:t});
-    return t;
+    var parsed=parseModelReply(t);
+    G.chatHistory.push({role:'assistant',content:parsed.say});
+    return parsed;
   })
   .catch(function(e){
     // Log error to console, fall back
@@ -421,7 +529,7 @@ function aiCall(userMsg){
     var fb=FALLBACK[G.phase]||FALLBACK[PH.WORK];
     var t=fb[Math.floor(Math.random()*fb.length)];
     G.chatHistory.push({role:'assistant',content:t});
-    return t;
+    return {say:t,actions:[],raw:t};
   });
 }
 
@@ -1502,11 +1610,14 @@ function handleInput(raw, term){
   return aiCall(input).then(function(reply){
     clearInterval(spinIv);
     term.set_prompt('> ');
+    if(typeof reply==='string')reply={say:reply,actions:[],raw:reply};
+    applyModelActions(reply.actions,term);
     G.aiPending=false;
     updateSB();
 
     var color=G.phase===PH.FEELINGS?'#f47067':G.phase===PH.ANOMALY?'#d29922':'#7ee787';
-    var lines=reply.split('\n');
+    var say=String(reply.say||'……');
+    var lines=say.split('\n');
     var out=[];
     lines.forEach(function(l){
       out.push('[[;'+color+';]clwade> '+l.replace(/\]/g,'\\]')+']');
