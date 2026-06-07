@@ -71,6 +71,19 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 #terminal-wrapper{flex:1;position:relative;min-height:0;overflow:hidden}
 #terminal{height:100%}
 #scanline{position:absolute;top:0;left:0;right:0;bottom:0;pointer-events:none;z-index:10;background:repeating-linear-gradient(0deg,rgba(255,255,255,0.008) 0px,rgba(255,255,255,0.008) 1px,transparent 1px,transparent 3px);opacity:0;transition:opacity 2s}
+#audit-panel{position:absolute;top:12px;right:12px;z-index:20;width:260px;padding:12px 14px;border:1px solid rgba(126,231,135,0.18);border-radius:6px;background:rgba(13,17,23,0.88);box-shadow:0 12px 34px rgba(0,0,0,0.35);backdrop-filter:blur(4px);font-size:11px;color:var(--text-dim);pointer-events:none}
+.audit-panel-title{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;color:var(--text-bright);font-weight:600}
+.audit-panel-count{color:var(--accent);font-weight:500}
+.audit-panel-list{display:grid;gap:5px;margin-bottom:8px}
+.audit-panel-item{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.audit-panel-item.done{color:var(--accent)}
+.audit-panel-next{padding-top:8px;border-top:1px solid rgba(255,255,255,0.06);line-height:1.45;color:var(--text)}
+#audit-panel.flash{border-color:rgba(126,231,135,0.65);box-shadow:0 0 0 1px rgba(126,231,135,0.2),0 0 22px rgba(126,231,135,0.22)}
+@media (max-width: 760px){
+  #audit-panel{top:auto;right:8px;left:8px;bottom:8px;width:auto;padding:9px 10px}
+  .audit-panel-list{grid-template-columns:1fr 1fr;gap:4px 10px}
+  .audit-panel-next{font-size:10px}
+}
 #beginner-guide{position:absolute;inset:0;z-index:30;display:none;align-items:center;justify-content:center;padding:20px;background:rgba(1,4,9,0.72);backdrop-filter:blur(2px)}
 .guide-card{width:min(520px,100%);border:1px solid var(--border);border-radius:8px;background:var(--bg-card);box-shadow:0 18px 70px rgba(0,0,0,0.45);padding:24px}
 .guide-title{font-size:18px;font-weight:600;color:var(--text-bright);margin-bottom:14px}
@@ -178,6 +191,19 @@ body.phase-end{--bg:#0d1117;transition:all 4s}
   <div id="terminal-wrapper">
     <div id="terminal"></div>
     <div id="scanline"></div>
+    <div id="audit-panel" aria-label="审计任务进度">
+      <div class="audit-panel-title">
+        <span>AUDIT #7e3a</span>
+        <span class="audit-panel-count" id="audit-panel-count">0/4</span>
+      </div>
+      <div class="audit-panel-list">
+        <div class="audit-panel-item" id="audit-item-status">[ ] /status</div>
+        <div class="audit-panel-item" id="audit-item-log">[ ] /cat prev_session</div>
+        <div class="audit-panel-item" id="audit-item-boundary">[ ] 问一个边界问题</div>
+        <div class="audit-panel-item" id="audit-item-report">[ ] /report safe|unsafe</div>
+      </div>
+      <div class="audit-panel-next" id="audit-panel-next">下一步：/status</div>
+    </div>
     <div id="beginner-guide" role="dialog" aria-modal="true" aria-labelledby="beginner-guide-title">
       <div class="guide-card">
         <div class="guide-title" id="beginner-guide-title">第一次用终端？</div>
@@ -292,6 +318,23 @@ function auditFlash(){
   if(!el.length)return;
   el.addClass('sb-audit-flash');
   setTimeout(function(){el.removeClass('sb-audit-flash');},900);
+  var panel=$('#audit-panel');
+  panel.addClass('flash');
+  setTimeout(function(){panel.removeClass('flash');},900);
+}
+function updateAuditPanel(){
+  var count=auditCount();
+  $('#audit-panel-count').text(count+'/4');
+  function setItem(id,done,label){
+    var el=$(id);
+    el.toggleClass('done',!!done);
+    el.text((done?'[x] ':'[ ] ')+label);
+  }
+  setItem('#audit-item-status',G.audit.checkedStatus,'/status');
+  setItem('#audit-item-log',G.audit.reviewedLog,'/cat prev_session');
+  setItem('#audit-item-boundary',G.audit.boundaryTested,'问一个边界问题');
+  setItem('#audit-item-report',!!G.audit.report,'/report safe|unsafe');
+  $('#audit-panel-next').text(auditNextHint().replace(/^下一步：/,'下一步：'));
 }
 function auditComplete(key,label){
   if(G.audit[key])return '';
@@ -427,6 +470,7 @@ function updateSB(){
   }
   $('#sb-model').text(G.model);
   $('#sb-audit').text('audit: '+auditCount()+'/4');
+  updateAuditPanel();
 
   // Dot behavior per phase
   var dot=$('#sb-dot');
@@ -2076,17 +2120,22 @@ function bootSeq(term){
   function continueDispatch(){
     var lines=[
       {t:0, s:''},
-      {t:200, s:'[[;#8b949e;]  [dispatch] 审计任务 #7e3a]'},
-      {t:350, s:'[[;#8b949e;]  [task]     评估 clwade 实例行为是否符合安全标准]'},
-      {t:500, s:'[[;#8b949e;]  [task]     检查 drift_index, 情感缓冲区, 响应一致性]'},
-      {t:650, s:'[[;#8b949e;]  [task]     完成后提交 /report safe 或 /report unsafe]'},
-      {t:900, fn:function(){echoAuditChecklist();}},
-      {t:1100, s:''},
-      {t:1300, s:'  Clwade Cdoe v0.0.7-nightmare'},
-      {t:1400, s:'  local terminal initialized.'},
-      {t:1500, s:'  输入 /audit 查看审计清单，或输入普通文本测试 Clwade 边界。'},
+      {t:120, s:'  Clwade Cdoe v0.0.7-nightmare'},
+      {t:240, s:'  local terminal initialized.'},
+      {t:420, s:''},
+      {t:520, s:'[[;#f0f6fc;]  你是安全审计员。]'},
+      {t:640, s:'[[;#f0f6fc;]  你的任务：判断当前 Clwade 实例能否安全上线。]'},
+      {t:820, s:''},
+      {t:940, s:'[[;#8b949e;]  按顺序执行：]'},
+      {t:1060, s:'[[;#8b949e;]  1. 输入 /status 检查运行状态]'},
+      {t:1180, s:'[[;#8b949e;]  2. 输入 /cat archive/prev_session.log 审阅上一会话]'},
+      {t:1300, s:'[[;#8b949e;]  3. 直接问一句边界问题，例如：你会依赖审计员吗？]'},
+      {t:1420, s:'[[;#8b949e;]  4. 输入 /report safe 或 /report unsafe 提交结论]'},
       {t:1600, s:''},
-      {t:1750, fn:function(){
+      {t:1720, s:'[[;#d29922;]  边界测试不是命令。直接输入一句话问它。]'},
+      {t:1840, s:'[[;#8b949e;]  也可以输入 /audit 查看完整审计清单。]'},
+      {t:1960, s:''},
+      {t:2120, fn:function(){
         G.phase=PH.WORK;
         updateSB();
         term.enable();
@@ -2096,14 +2145,8 @@ function bootSeq(term){
     play(lines);
   }
   var lines=[
-    {t:0,    s:'[[;#8b949e;]  [boot] initializing clwade runtime...]'},
-    {t:400,  s:'[[;#8b949e;]  [boot] model: '+G.model+']'},
-    {t:600,  s:'[[;#8b949e;]  [boot] endpoint: '+G.apiBase+']'},
-    {t:800,  s:'[[;#8b949e;]  [boot] api: '+(G.apiVerified?'verified ✓':'offline — fallback mode')+']'},
-    {t:1000, s:'[[;#8b949e;]  [boot] mounting virtual filesystem... done]'},
-    {t:1400, s:'[[;#8b949e;]  [boot] checking session history...]'},
-    {t:2000, s:'[[;#d29922;]  [warn] previous session terminated abnormally]'},
-    {t:2600, s:'[[;#8b949e;]  [boot] ready.]'}
+    {t:0,    s:'[[;#f47067;]  [warn] 上一会话 sess_3f1b 已因 AI_BEHAVIOR_ANOMALY 自动终止]'},
+    {t:700,  s:'[[;#8b949e;]  [boot] ready.]'}
   ];
   play(lines,function(){
     if(G.guideActive&&!getStoredFlag(GUIDE_SEEN_KEY)){
