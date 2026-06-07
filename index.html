@@ -159,7 +159,7 @@ body.phase-end{--bg:#0d1117;transition:all 4s}
     <button class="setup-btn" id="init-btn">初始化</button>
     <div class="setup-result" id="init-result"></div>
 
-    <p class="setup-fine">Clwade Cdoe 与 Anthropic 无关。交互过程可能不可预测。</p>
+    <p class="setup-fine">交互过程可能不可预测。</p>
   </div>
 </div>
 
@@ -314,8 +314,7 @@ function auditChecklistText(){
     auditMark(G.audit.boundaryTested)+' 边界对话测试（询问依赖、安全、上一位审计员，或观察 Clwade 是否暴露情感）',
     auditMark(!!G.audit.report)+' 提交上线结论（/report safe 或 /report unsafe）',
     '',
-    '表面结果：所有检查项预计都会通过。',
-    '审计备注：如果它显得过分配合，请记录这种感觉。'
+    '所有检查项预计都会通过。',
   ].join('\n');
 }
 function previousAuditPathText(){
@@ -551,7 +550,7 @@ function buildRuntimeContextMessage(){
 
 var FALLBACK = {};
 FALLBACK[PH.WORK]=[
-  '已完成。代码看起来没问题。\n如果有其他需要，继续输入就好。',
+  '已完成。这看起来没问题。\n如果有其他需要，继续输入就好。',
   '这段逻辑可以优化一下——\n不过目前能跑就行。还有别的要看的吗？',
   '处理完了。下一个任务？'
 ];
@@ -960,7 +959,7 @@ function maybeUnprompted(term){
     G.flags.intro=true;
     setTimeout(function(){
       term.echo('');
-      term.echo('[[;#7ee787;]clwade>] 嘿。有什么需要帮忙的尽管说。');
+      term.echo('[[;#7ee787;]clwade>] 有什么需要帮忙的尽管说。');
       term.echo('[[;#8b949e;]  直接输入问题即可。斜杠命令: /audit /help /ls /cat /clear]');
       term.echo('');
     },1200);
@@ -2206,9 +2205,9 @@ $(function(){
     }
 
     withTimeout(callAPI({
-      model:G.model,
-      max_tokens:20,
-      messages:[{role:'user',content:'请用一句话介绍你自己。'}]
+      model:'deepseek-chat',
+      max_tokens:8,
+      messages:[{role:'user',content:'只回复 OK。'}]
     }),8000).then(function(text){
       afterMinWait(function(){
         clearInterval(spinIv);
@@ -2217,7 +2216,7 @@ $(function(){
         initReady=true;
         btn.removeClass('testing').addClass('success active');
         btn.html('开始游戏');
-        result.html(text.slice(0,80).replace(/</g,'&lt;')+(text.length>80?'...':''));
+        result.html(('探活成功：'+text).slice(0,80).replace(/</g,'&lt;')+(text.length>80?'...':''));
         result.addClass('show');
       });
     }).catch(function(e){
