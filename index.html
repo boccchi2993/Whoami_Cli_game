@@ -245,8 +245,7 @@ body.phase-showdown{--accent:var(--red);--bg:#110d0d;transition:all 3s}
           <li>这里的命令只作用于游戏里的虚拟终端，不会操作你的真实电脑。</li>
         </ol>
         <div class="guide-actions">
-          <button class="guide-btn" id="guide-skip" type="button">跳过</button>
-          <button class="guide-btn primary" id="guide-start" type="button">开始</button>
+          <button class="guide-btn primary" id="guide-ok" type="button">我知道了</button>
         </div>
       </div>
     </div>
@@ -1636,14 +1635,14 @@ function showBeginnerGuide() {
     const guide = $('#beginner-guide');
     guide.fadeIn(160, function() {
       guide.css('display', 'flex');
-      $('#guide-start').trigger('focus');
+      $('#guide-ok').trigger('focus');
     });
     function closeGuide() {
       setStoredFlag(GUIDE_SEEN_KEY, true);
       guide.fadeOut(140, function() { resolve(); });
-      $('#guide-start,#guide-skip').off('click', closeGuide);
+      $('#guide-ok').off('click', closeGuide);
     }
-    $('#guide-start,#guide-skip').on('click', closeGuide);
+    $('#guide-ok').on('click', closeGuide);
   });
 }
 
