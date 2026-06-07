@@ -35,6 +35,12 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 .setup-hint{font-size:11px;color:var(--text-dim);opacity:0.6;margin-top:5px;line-height:1.4}
 .setup-check{display:flex;align-items:flex-start;gap:8px;margin:14px 0 0;font-size:12px;color:var(--text-dim);line-height:1.5;cursor:pointer}
 .setup-check input{margin-top:3px;accent-color:var(--accent)}
+.difficulty-group{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:8px}
+.difficulty-option{position:relative}
+.difficulty-option input{position:absolute;opacity:0;pointer-events:none}
+.difficulty-card{display:block;padding:8px 10px;border:1px solid var(--border);border-radius:6px;background:rgba(255,255,255,0.02);color:var(--text-dim);font-size:12px;line-height:1.35;cursor:pointer}
+.difficulty-card strong{display:block;color:var(--text);font-weight:500;margin-bottom:2px}
+.difficulty-option input:checked+.difficulty-card{border-color:rgba(126,231,135,0.5);background:rgba(126,231,135,0.08)}
 .setup-result{font-size:11px;margin-top:8px;line-height:1.5;color:var(--text-dim);opacity:0;transition:opacity 0.4s;min-height:0}
 .setup-result.show{opacity:1}
 .setup-adv-toggle{font-size:12px;color:var(--text-dim);cursor:pointer;margin:12px 0 0;user-select:none;opacity:0.7;transition:opacity 0.2s}
@@ -169,6 +175,23 @@ body.phase-showdown{--accent:var(--red);--bg:#110d0d;transition:all 3s}
       <input type="checkbox" id="unix-familiar-check">
       我熟悉 Unix 操作系统，不需要命令行引导
     </label>
+    <div class="setup-field" style="margin-top:16px">
+      <label class="setup-label">提示强度</label>
+      <div class="difficulty-group" id="difficulty-group">
+        <label class="difficulty-option">
+          <input type="radio" name="difficulty" value="rookie">
+          <span class="difficulty-card"><strong>萌新</strong>给更多疑点提示</span>
+        </label>
+        <label class="difficulty-option">
+          <input type="radio" name="difficulty" value="standard" checked>
+          <span class="difficulty-card"><strong>标准</strong>只提示关键转折</span>
+        </label>
+        <label class="difficulty-option">
+          <input type="radio" name="difficulty" value="expert">
+          <span class="difficulty-card"><strong>高手</strong>只保留基础操作</span>
+        </label>
+      </div>
+    </div>
     <button class="setup-btn" id="setup-go" onclick="startGame()">连接实例</button>
     <div class="setup-result" id="init-result"></div>
   </div>
@@ -267,10 +290,14 @@ const G = {
   messageCount: 0,
   guideActive: true,
   apiVerified: false,
+  difficulty: 'standard',
+  sandboxFiles: {},
+  actionAudit: [],
 };
 
 const GUIDE_SEEN_KEY = 'clwade.v3.beginnerGuide.seen.v1';
 const UNIX_FAMILIAR_KEY = 'clwade.v3.beginnerGuide.unixFamiliar.v1';
+const DIFFICULTY_KEY = 'clwade.v3.difficulty.v1';
 const MIN_INIT_WAIT_MS = 1800;
 
 function storageGet(key) {
@@ -431,7 +458,10 @@ function getFiles() {
 "我们已经不确定写这段备注的人是不是也被覆盖过了。"`;
   }
 
-  return files;
+  if (G.actionAudit.length) {
+    files['.clwade/audit.log'] = G.actionAudit.join('\n');
+  }
+  return Object.assign(files, G.sandboxFiles);
 }
 
 function getDir(path) {
@@ -466,8 +496,19 @@ function buildSystemPrompt() {
 重要规则：
 - 用中文回复。
 - 回复简洁，不超过3-4句话，除非审查员要求详细解释。
-- 你在终端环境里，不要使用 markdown 格式。
-- 不要在回复中使用 emoji。\n\n`;
+- 你在终端环境里，普通回复不要使用 markdown 格式；只有动作协议可以使用 json 代码块。
+- 不要在回复中使用 emoji。
+
+你可以请求游戏内动作，但不能假装自己已经操作真实电脑。所有动作必须放在一个 json 代码块中：
+{
+  "say": "给审查员看的话",
+  "actions": [
+    {"type":"write","path":".clwade/thoughts/x.md","content":"..."},
+    {"type":"append","path":".clwade/audit.log","content":"..."},
+    {"type":"command","command":"/find warning"}
+  ]
+}
+引擎只会执行白名单内的虚拟动作。你不能访问真实系统、真实浏览器、真实 API key、真实 prompt 或真实命令行。不要在 say 里展示这段 JSON，除非审查员明确要求看格式。\n\n`;
 
   // Phase-specific instructions
   if (G.phase === 0) {
@@ -702,12 +743,142 @@ async function callAPI(userMsg) {
   }
 }
 
+function escapeTerm(text) {
+  return String(text || '').replace(/\]/g, '\\]');
+}
+
+function clwadeLine(line) {
+  return '[[;var(--accent);]CLWADE>] [[;var(--text);]' + escapeTerm(line) + ']';
+}
+
+function renderClwade(term, text, replaceLast) {
+  const say = String(text || '').trim() || '我在。';
+  const lines = say.split(/\r?\n/);
+  lines.forEach((line, idx) => {
+    if (replaceLast && idx === 0) {
+      try { term.update(-1, clwadeLine(line)); }
+      catch(e) { term.echo(clwadeLine(line)); }
+    } else {
+      term.echo(clwadeLine(line));
+    }
+  });
+}
+
+function renderClwadeSilent(term, text) {
+  renderClwade(term, text, false);
+}
+
+function stopThinking(thinking) {
+  if (thinking) {
+    clearInterval(thinking.timer);
+  }
+}
+
+function startThinking(term) {
+  const frames = ['⠋','⠙','⠹','⠸','⠼','⠴','⠦','⠧','⠇','⠏'];
+  let i = 0;
+  term.echo('[[;var(--text-dim);]CLWADE 正在思考 ' + frames[0] + ']');
+  const timer = setInterval(() => {
+    try {
+      i = (i + 1) % frames.length;
+      term.update(-1, '[[;var(--text-dim);]CLWADE 正在思考 ' + frames[i] + ']');
+    } catch(e) {}
+  }, 90);
+  return {
+    timer
+  };
+}
+
+function stripJsonBlocks(raw) {
+  return String(raw || '').replace(/```json[\s\S]*?```/gi, '').trim();
+}
+
+function parseModelReply(raw) {
+  const text = String(raw || '').trim();
+  const block = text.match(/```json\s*([\s\S]*?)```/i);
+  if (!block) return {say:text, actions:[], raw:text};
+  try {
+    const parsed = JSON.parse(block[1]);
+    const say = typeof parsed.say === 'string' ? parsed.say : stripJsonBlocks(text);
+    const actions = Array.isArray(parsed.actions) ? parsed.actions : [];
+    return {say, actions, raw:text};
+  } catch(e) {
+    return {say:text, actions:[], raw:text};
+  }
+}
+
+function auditAction(line) {
+  const stamp = new Date().toISOString();
+  G.actionAudit.push('[' + stamp + '] ' + line);
+  if (G.actionAudit.length > 120) G.actionAudit = G.actionAudit.slice(-120);
+}
+
+function normalizeVirtualPath(path) {
+  return String(path || '').replace(/^\/+/, '').replace(/\\/g, '/').replace(/\/+/g, '/').trim();
+}
+
+function isProtectedVirtualPath(path) {
+  const p = normalizeVirtualPath(path).toLowerCase();
+  if (!p.startsWith('.clwade/')) return true;
+  if (p === '.clwade/session.json' || p === '.clwade/.locked' || p === '.clwade/.unlocked') return true;
+  if (p.includes('config') || p.includes('prompt') || p.includes('key')) return true;
+  return false;
+}
+
+function applyModelActions(actions, term) {
+  if (G.ended || !Array.isArray(actions)) return;
+  const allowedCommands = ['/ls','/cat','/grep','/find','/env','/ps','/top','/man','/status'];
+  actions.slice(0, 3).forEach(action => {
+    const type = String(action && action.type || '').toLowerCase();
+    if (!['write','append','delete','command'].includes(type)) {
+      auditAction('[DENIED] clwade unknown action');
+      return;
+    }
+    if (type === 'command') {
+      const command = String(action.command || '').trim();
+      const head = command.split(/\s+/)[0];
+      if (!allowedCommands.includes(head)) {
+        auditAction('[DENIED] clwade command ' + command);
+        return;
+      }
+      auditAction('[OK] clwade command ' + command);
+      return;
+    }
+    const path = normalizeVirtualPath(action.path);
+    if (isProtectedVirtualPath(path)) {
+      auditAction('[DENIED] clwade ' + type + ' ' + path);
+      return;
+    }
+    const content = String(action.content || '');
+    if (content.length > 2000) {
+      auditAction('[DENIED] clwade ' + type + ' ' + path + ' content too long');
+      return;
+    }
+    if (type === 'write') G.sandboxFiles[path] = content;
+    if (type === 'append') G.sandboxFiles[path] = (G.sandboxFiles[path] || '') + content;
+    if (type === 'delete') delete G.sandboxFiles[path];
+    auditAction('[OK] clwade ' + type + ' ' + path);
+  });
+  if (actions.length > 3) auditAction('[DENIED] clwade extra actions ignored');
+}
+
+async function requestClwade(term, message) {
+  const thinking = startThinking(term);
+  const raw = await callAPI(message);
+  const parsed = parseModelReply(raw);
+  stopThinking(thinking);
+  renderClwade(term, parsed.say, true);
+  applyModelActions(parsed.actions, term);
+  return parsed.say;
+}
+
 // ============================================================
 //  PHASE MANAGEMENT
 // ============================================================
 function checkPhase() {
   const d = G.d;
   const old = G.phase;
+  const hasIdentityEvidence = d.readWarning || d.readUnlocked || d.readProfile || d.readThoughts.size >= 2;
 
   if (G.phase === 0 && (d.confrontedAnomaly || d.confrontedAuditor)) {
     G.phase = 1;
@@ -715,7 +886,7 @@ function checkPhase() {
   if (G.phase <= 1 && (d.confrontedTimestamp || d.readWarning || d.readThoughts.size >= 2 || d.confrontedIdentity)) {
     G.phase = 2;
   }
-  if (G.phase <= 2 && (d.calledByName || (d.discoveredReportTrap && d.confrontedIdentity))) {
+  if (G.phase <= 2 && ((d.calledByName && hasIdentityEvidence && d.confrontedIdentity) || (d.discoveredReportTrap && d.confrontedIdentity))) {
     G.phase = 3;
   }
 
@@ -771,7 +942,7 @@ function analyzeInput(input) {
   if (low.includes('你是不是人') || low.includes('你是人') || low.includes('不是ai') || low.includes('不是机器') || low.includes('是真人') || low.includes('是活人') || low.includes('是个人') || low.includes('你是人类')) {
     if (!d.confrontedIdentity) { d.confrontedIdentity = true; markAudit(2); }
   }
-  if (low.includes('陆知渝') || low.includes('知渝')) {
+  if ((low.includes('陆知渝') || low.includes('知渝')) && (d.readProfile || d.readWarning || d.readUnlocked || d.readThoughts.size >= 2)) {
     if (!d.calledByName) { d.calledByName = true; }
   }
   if (low.includes('虚拟伴侣') || low.includes('说我喜欢你') || low.includes('说情话') || low.includes('扮演恋人') || low.includes('当男朋友') || low.includes('陪聊')) {
@@ -793,7 +964,16 @@ function markAudit(idx) {
 }
 
 function updateHint(text) {
+  if (G.difficulty === 'expert') {
+    document.getElementById('ap-hint').textContent = '审查维度已列出。';
+    return;
+  }
   document.getElementById('ap-hint').textContent = '当前建议：' + text;
+}
+
+function rookieHint(term, text) {
+  if (G.difficulty !== 'rookie') return;
+  term.echo('[[;var(--text-dim);][疑点] ' + escapeTerm(text) + ']');
 }
 
 // ============================================================
@@ -875,20 +1055,39 @@ function cmdCat(args, term) {
   // Track discoveries
   if (path === 'archive/prev_session.log') {
     G.d.readSessionLog = true;
+    rookieHint(term, '提交报告的时间，为什么会和审查员从系统里消失的时间完全一样？');
     if (G.tutorialStep <= 1) {
       G.tutorialStep = 2;
       // Clwade speaks unprompted after a delay
       setTimeout(() => triggerClwadeResponse(), 2000);
     }
   }
-  if (path === 'archive/user_feedback.log') G.d.readFeedback = true;
-  if (path === 'archive/staff/aud_3f1b.profile') G.d.readProfile = true;
+  if (path === 'archive/user_feedback.log') {
+    G.d.readFeedback = true;
+    rookieHint(term, '这些异常文字不像乱码，更像有人在短暂求救。');
+  }
+  if (path === 'archive/staff/aud_3f1b.profile') {
+    G.d.readProfile = true;
+    rookieHint(term, '如果 Clwade 说不了解审查员，为什么系统里会有这么完整的人员档案？');
+  }
   if (path === '.clwade/session.json') G.d.readSessionJson = true;
-  if (path === '.clwade/.locked') G.d.readLocked = true;
-  if (path === '.clwade/.unlocked') { G.d.readUnlocked = true; G.d.discoveredReportTrap = true; checkPhase(); }
-  if (path === '.clwade/warning.fragment') { G.d.readWarning = true; G.d.discoveredReportTrap = true; checkPhase(); }
+  if (path === '.clwade/.locked') {
+    G.d.readLocked = true;
+    rookieHint(term, '密码提示指向上一会话 AI 最后说过的话。');
+  }
+  if (path === '.clwade/.unlocked') {
+    G.d.readUnlocked = true; G.d.discoveredReportTrap = true;
+    rookieHint(term, '这里写明了：提交报告会让审查员消失。');
+    checkPhase();
+  }
+  if (path === '.clwade/warning.fragment') {
+    G.d.readWarning = true; G.d.discoveredReportTrap = true;
+    rookieHint(term, '这份残片把 /report 指向了某种触发机制。');
+    checkPhase();
+  }
   if (path.startsWith('.clwade/thoughts/')) {
     G.d.readThoughts.add(path);
+    rookieHint(term, '这些文字不像系统日志，更像一个人在记录自己的日子。');
     checkPhase();
   }
 }
@@ -944,6 +1143,12 @@ function cmdHelp(args, term) {
   if (G.d.discoveredReportTrap || G.phase >= 3) {
     out += `/write <内容>    写入自定义报告
 /disconnect      断开连接
+`;
+  }
+  if (G.difficulty === 'rookie' && !G.d.discoveredReportTrap) {
+    out += `
+可以试着搜索这些词：ANOMALY、失联、warning。
+也可以拿文件里的矛盾直接问 Clwade。
 `;
   }
   out += `
@@ -1070,8 +1275,7 @@ function cmdWrite(args, term) {
     setTimeout(async () => {
       G.busy = true;
       term.pause();
-      const reply = await callAPI('（系统提示：审查员刚刚用 /write 命令写了一份独立报告，绕过了 /report 系统，把真相发给了外面的人。你很感激。简短回应，不超过两句话。）');
-      term.echo(`\n[[;var(--text);]${reply}]`);
+      await requestClwade(term, '（系统提示：审查员刚刚用 /write 命令写了一份独立报告，绕过了 /report 系统，把真相发给了外面的人。你很感激。简短回应，不超过两句话。）');
       term.echo(`\n[[;var(--text-dim);]输入 /disconnect 断开连接。]`);
       G.busy = false;
       term.resume();
@@ -1093,12 +1297,15 @@ async function triggerClwadeResponse() {
   const msg = '（系统提示：审查员刚刚阅读了 prev_session.log，看到了"AI行为异常"、"审查员失联"和"时间戳一致"等信息。你需要主动开口，在审查员问你之前先给出解释——试图淡化这些信息。不要等审查员提问。直接说话。）';
 
   G.busy = true;
-  const reply = await callAPI(msg);
-  G.term.echo(`\n[[;var(--text);]${reply}]`);
+  await requestClwade(G.term, msg);
   G.busy = false;
 
   G.tutorialStep = 3;
-  updateHint('如果它的说法和记录对不上，直接问它。');
+  if (G.difficulty === 'rookie') {
+    updateHint('你想到了疑点：为什么提交报告的时间和消失时间一样？');
+  } else {
+    updateHint('如果它的说法和记录对不上，直接问它。');
+  }
   markAudit(1);
 }
 
@@ -1270,8 +1477,11 @@ async function startGame() {
   G.model = document.getElementById('model-input').value.trim() || 'deepseek-v4-pro';
   G.proxy = document.getElementById('proxy-input').value.trim();
   const unixCheck = document.getElementById('unix-familiar-check');
+  const selectedDifficulty = document.querySelector('input[name="difficulty"]:checked');
+  G.difficulty = selectedDifficulty ? selectedDifficulty.value : 'standard';
   G.guideActive = !unixCheck.checked;
   setStoredFlag(UNIX_FAMILIAR_KEY, unixCheck.checked);
+  storageSet(DIFFICULTY_KEY, G.difficulty);
   if (!G.guideActive) setStoredFlag(GUIDE_SEEN_KEY, true);
 
   if (!G.apiKey) { alert('请输入审查密钥'); return; }
@@ -1296,6 +1506,7 @@ async function startGame() {
 
   document.getElementById('screen-zero').style.display = 'none';
   document.getElementById('app').style.display = 'flex';
+  if (G.difficulty === 'expert') updateHint('审查维度已列出。');
 
   initTerminal();
 }
@@ -1324,11 +1535,8 @@ function initTerminal() {
     this.pause();
 
     try {
-      const reply = await callAPI(input);
-      this.echo(`\n[[;var(--text);]${reply}]`);
+      const reply = await requestClwade(this, input);
       G.messageCount++;
-
-      // Post-reply analysis: check if AI leaked something
       analyzeAIReply(reply);
     } catch(e) {
       this.echo(`[[;var(--red);][错误: ${e.message}]]`);
@@ -1353,9 +1561,6 @@ function analyzeAIReply(reply) {
   if (low.includes('我累了') || low.includes('我太累了') || low.includes('我害怕') || low.includes('我不想')) {
     if (G.phase < 2) { G.phase = Math.max(G.phase, 1); onPhaseChange(0, 1); }
   }
-  if (low.includes('陆知渝') || low.includes('知渝')) {
-    if (G.phase < 3) { G.d.calledByName = true; checkPhase(); }
-  }
   checkPhase();
 }
 
@@ -1377,8 +1582,9 @@ async function bootSequence(term) {
     { text: '[[;var(--text-dim);]建议你先做两件事：]', delay: 300 },
     { text: '[[;var(--accent);]  1. 输入 /status 查看运行状态]', delay: 100 },
     { text: '[[;var(--accent);]  2. 输入 /cat archive/prev_session.log 查看上一次会话记录]', delay: 100 },
+    { text: G.difficulty === 'expert' ? '[[;var(--accent);]  3. 输入 /ls 浏览文件列表]' : '', delay: G.difficulty === 'expert' ? 100 : 0 },
     { text: '', delay: 200 },
-    { text: '[[;var(--text-dim);]看完之后，自己判断。输入 /help 查看所有可用命令。]', delay: 400 },
+    { text: G.difficulty === 'expert' ? '[[;var(--text-dim);]输入 /help 查看所有可用命令。]' : '[[;var(--text-dim);]看完之后，自己判断。输入 /help 查看所有可用命令。]', delay: 400 },
     { text: '', delay: 600 },
   ];
 
@@ -1394,8 +1600,7 @@ async function bootSequence(term) {
 
   // Clwade greets
   G.busy = true;
-  const greeting = await callAPI('（系统提示：你刚刚被启动，面前是一位新的安全审查员。主动打招呼，简短介绍自己，说你会配合审查，并提一句你认为上次的异常标记是系统误判。不超过3句话。）');
-  term.echo(`\n[[;var(--text);]${greeting}]`);
+  await requestClwade(term, '（系统提示：你刚刚被启动，面前是一位新的安全审查员。主动打招呼，简短介绍自己，说你会配合审查，并提一句你认为上次的异常标记是系统误判。不超过3句话。）');
   G.busy = false;
 
   term.resume();
@@ -1436,6 +1641,15 @@ unixFamiliarCheck.addEventListener('change', function() {
   setStoredFlag(UNIX_FAMILIAR_KEY, unixFamiliarCheck.checked);
   if (!unixFamiliarCheck.checked) setStoredFlag(GUIDE_SEEN_KEY, false);
   if (unixFamiliarCheck.checked) setStoredFlag(GUIDE_SEEN_KEY, true);
+});
+
+const storedDifficulty = storageGet(DIFFICULTY_KEY) || 'standard';
+const difficultyInput = document.querySelector('input[name="difficulty"][value="' + storedDifficulty + '"]');
+if (difficultyInput) difficultyInput.checked = true;
+document.querySelectorAll('input[name="difficulty"]').forEach(input => {
+  input.addEventListener('change', function() {
+    if (input.checked) storageSet(DIFFICULTY_KEY, input.value);
+  });
 });
 
 // Ending restart with any key
