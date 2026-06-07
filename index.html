@@ -676,7 +676,7 @@ function aiCall(userMsg){
   var msgs = G.chatHistory.slice(-12);
   msgs.unshift(buildRuntimeContextMessage());
 
-  return callAPI({model:G.model,max_tokens:300,system:sys,messages:msgs})
+  return callAPI({model:G.model,max_tokens:900,system:sys,messages:msgs})
   .then(function(t){
     var parsed=parseModelReply(t);
     G.chatHistory.push({role:'assistant',content:parsed.say});
