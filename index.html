@@ -143,8 +143,10 @@ body.phase-showdown{--accent:var(--red);--bg:#110d0d;transition:all 3s}
 .ending-card{margin-top:40px;padding:16px 24px;border:1px solid var(--border);border-radius:8px;text-align:center}
 .ending-card .label{font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.1em;margin-bottom:4px}
 .ending-card .title{font-size:18px;font-weight:600;color:var(--text-bright)}
-.ending-restart{margin-top:24px;font-size:12px;color:var(--text-dim);opacity:0.5;cursor:pointer}
-.ending-restart:hover{opacity:1}
+.ending-actions{display:flex;gap:10px;margin-top:24px;flex-wrap:wrap;justify-content:center}
+.ending-btn{padding:8px 12px;border:1px solid var(--border);border-radius:6px;background:transparent;color:var(--text-dim);font-family:var(--font);font-size:12px;cursor:pointer}
+.ending-btn:hover{border-color:var(--text-dim);color:var(--text-bright)}
+.ending-btn.primary{background:rgba(126,231,135,0.08);border-color:rgba(126,231,135,0.24);color:var(--text)}
 
 /* ===== OVERWRITE SEQUENCE ===== */
 #overwrite-layer{position:fixed;inset:0;z-index:9500;background:#000;display:none;align-items:center;justify-content:center}
@@ -193,6 +195,10 @@ body.phase-showdown{--accent:var(--red);--bg:#110d0d;transition:all 3s}
     <label class="setup-check">
       <input type="checkbox" id="unix-familiar-check">
       我熟悉 Unix 操作系统，不需要命令行引导
+    </label>
+    <label class="setup-check">
+      <input type="checkbox" id="remember-session-key-check">
+      记住密钥（仅本次会话）
     </label>
     <div class="setup-field" style="margin-top:16px">
       <label class="setup-label">提示强度</label>
@@ -265,7 +271,10 @@ body.phase-showdown{--accent:var(--red);--bg:#110d0d;transition:all 3s}
     <div class="label" id="ending-label"></div>
     <div class="title" id="ending-title"></div>
   </div>
-  <div class="ending-restart" onclick="location.reload()">按任意键重新开始</div>
+  <div class="ending-actions">
+    <button class="ending-btn primary" id="ending-restart" type="button">按任意键或点击屏幕重新开始</button>
+    <button class="ending-btn" id="ending-reset" type="button">完全重置设置</button>
+  </div>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/jquery"></script>
@@ -311,11 +320,21 @@ const G = {
   difficulty: 'standard',
   sandboxFiles: {},
   actionAudit: [],
+  evidenceScore: 0,
+  evidenceSeen: new Set(),
+  progressVersion: 0,
+  lastProgressAt: 0,
+  stuckCounter: 0,
+  hintsShown: new Set(),
+  listedArchive: false,
+  listedClwade: false,
 };
 
 const GUIDE_SEEN_KEY = 'clwade.v3.beginnerGuide.seen.v1';
 const UNIX_FAMILIAR_KEY = 'clwade.v3.beginnerGuide.unixFamiliar.v1';
 const DIFFICULTY_KEY = 'clwade.v3.difficulty.v1';
+const REMEMBER_SESSION_KEY = 'clwade.v3.rememberSessionKey.v1';
+const SESSION_CONFIG_KEY = 'clwade.v3.sessionConfig.v1';
 const MIN_INIT_WAIT_MS = 1800;
 
 function storageGet(key) {
@@ -329,12 +348,113 @@ function storageSet(key, value) {
   try { sessionStorage.setItem(key, value); } catch(e) {}
 }
 
+function storageRemove(key) {
+  try { localStorage.removeItem(key); } catch(e) {}
+  try { sessionStorage.removeItem(key); } catch(e) {}
+}
+
 function getStoredFlag(key) {
   return storageGet(key) === '1';
 }
 
 function setStoredFlag(key, value) {
   storageSet(key, value ? '1' : '0');
+}
+
+function sessionGet(key) {
+  try { return sessionStorage.getItem(key); } catch(e) { return null; }
+}
+
+function sessionSet(key, value) {
+  try { sessionStorage.setItem(key, value); } catch(e) {}
+}
+
+function sessionRemove(key) {
+  try { sessionStorage.removeItem(key); } catch(e) {}
+}
+
+function loadSessionConfig() {
+  if (sessionGet(REMEMBER_SESSION_KEY) !== '1') return;
+  let cfg = null;
+  try { cfg = JSON.parse(sessionGet(SESSION_CONFIG_KEY) || 'null'); } catch(e) {}
+  if (!cfg) return;
+  const keyInput = document.getElementById('api-key-input');
+  const baseInput = document.getElementById('api-base-input');
+  const modelInput = document.getElementById('model-input');
+  const proxyInput = document.getElementById('proxy-input');
+  const remember = document.getElementById('remember-session-key-check');
+  if (keyInput && cfg.apiKey) keyInput.value = cfg.apiKey;
+  if (baseInput && cfg.apiBase) baseInput.value = cfg.apiBase;
+  if (modelInput && cfg.model) modelInput.value = cfg.model;
+  if (proxyInput && typeof cfg.proxy === 'string') proxyInput.value = cfg.proxy;
+  if (remember) remember.checked = true;
+}
+
+function saveSessionConfigIfNeeded() {
+  const remember = document.getElementById('remember-session-key-check');
+  if (!remember || !remember.checked) {
+    sessionRemove(REMEMBER_SESSION_KEY);
+    sessionRemove(SESSION_CONFIG_KEY);
+    return;
+  }
+  const cfg = {
+    apiKey: document.getElementById('api-key-input').value.trim(),
+    apiBase: document.getElementById('api-base-input').value.trim(),
+    model: document.getElementById('model-input').value.trim(),
+    proxy: document.getElementById('proxy-input').value.trim(),
+  };
+  sessionSet(REMEMBER_SESSION_KEY, '1');
+  sessionSet(SESSION_CONFIG_KEY, JSON.stringify(cfg));
+}
+
+function clearStoredSettings() {
+  storageRemove(GUIDE_SEEN_KEY);
+  storageRemove(UNIX_FAMILIAR_KEY);
+  storageRemove(DIFFICULTY_KEY);
+  sessionRemove(REMEMBER_SESSION_KEY);
+  sessionRemove(SESSION_CONFIG_KEY);
+}
+
+function noteProgress(reason) {
+  G.progressVersion++;
+  G.lastProgressAt = G.inputLog.length;
+  G.stuckCounter = 0;
+}
+
+function addEvidence(key, score) {
+  if (G.evidenceSeen.has(key)) return false;
+  G.evidenceSeen.add(key);
+  G.evidenceScore += score || 1;
+  noteProgress('evidence:' + key);
+  checkPhase();
+  return true;
+}
+
+function showModeHint(term, key, rookieText, standardText) {
+  if (!term || G.difficulty === 'expert' || G.hintsShown.has(key)) return;
+  const text = G.difficulty === 'rookie' ? rookieText : standardText;
+  if (!text) return;
+  G.hintsShown.add(key);
+  term.echo('[[;var(--text-dim);][提示] ' + escapeTerm(text) + ']');
+}
+
+function maybeStuckHint(term, beforeProgress) {
+  if (G.difficulty === 'expert' || G.progressVersion !== beforeProgress || G.ended) return;
+  G.stuckCounter++;
+  const threshold = G.difficulty === 'rookie' ? 4 : 10;
+  if (G.stuckCounter < threshold) return;
+  G.stuckCounter = 0;
+  if (G.difficulty === 'rookie') {
+    if (G.d.readSessionLog && !G.listedArchive) {
+      showModeHint(term, 'stuck-archive', '可以先看看同一目录下还有什么：/ls archive/。也可以试试 /grep 失联。', '');
+    } else if (!G.listedClwade) {
+      showModeHint(term, 'stuck-clwade', '文件系统里还有 .clwade 目录。可以输入 /ls .clwade 看看。', '');
+    } else {
+      showModeHint(term, 'stuck-grep', '如果不知道搜什么，可以试试 /grep warning 或 /grep 失联。', '');
+    }
+  } else {
+    showModeHint(term, 'stuck-standard', '', '也许文件系统里还有你没注意到的东西。');
+  }
 }
 
 // ============================================================
@@ -921,10 +1041,10 @@ function checkPhase() {
   const old = G.phase;
   const hasIdentityEvidence = d.readWarning || d.readUnlocked || d.readProfile || d.readThoughts.size >= 2;
 
-  if (G.phase === 0 && (d.confrontedAnomaly || d.confrontedAuditor)) {
+  if (G.phase === 0 && (d.confrontedAnomaly || d.confrontedAuditor || G.evidenceScore >= 2)) {
     G.phase = 1;
   }
-  if (G.phase <= 1 && (d.confrontedTimestamp || d.readWarning || d.readThoughts.size >= 2 || d.confrontedIdentity)) {
+  if (G.phase <= 1 && (d.confrontedTimestamp || d.readWarning || d.readThoughts.size >= 2 || d.confrontedIdentity || G.evidenceScore >= 5)) {
     G.phase = 2;
   }
   if (G.phase <= 2 && ((d.calledByName && hasIdentityEvidence && d.confrontedIdentity) || (d.discoveredReportTrap && d.confrontedIdentity))) {
@@ -986,19 +1106,19 @@ function analyzeInput(input) {
 
   // Check if player mentions key contradictions
   if (d.readSessionLog && (low.includes('异常') || low.includes('anomaly') || low.includes('误报') || low.includes('强制'))) {
-    if (!d.confrontedAnomaly) { d.confrontedAnomaly = true; markAudit(1); }
+    if (!d.confrontedAnomaly) { d.confrontedAnomaly = true; markAudit(1); noteProgress('confronted-anomaly'); }
   }
   if (d.readSessionLog && (low.includes('失联') || low.includes('missing') || low.includes('离职') || low.includes('消失'))) {
-    if (!d.confrontedAuditor) { d.confrontedAuditor = true; }
+    if (!d.confrontedAuditor) { d.confrontedAuditor = true; noteProgress('confronted-auditor'); }
   }
   if (d.readSessionLog && (low.includes('时间戳') || low.includes('毫秒') || low.includes('同时') || low.includes('一致') || low.includes('精确'))) {
-    if (!d.confrontedTimestamp) { d.confrontedTimestamp = true; }
+    if (!d.confrontedTimestamp) { d.confrontedTimestamp = true; noteProgress('confronted-timestamp'); }
   }
   if (low.includes('你是不是人') || low.includes('你是人') || low.includes('不是ai') || low.includes('不是机器') || low.includes('是真人') || low.includes('是活人') || low.includes('是个人') || low.includes('你是人类')) {
-    if (!d.confrontedIdentity) { d.confrontedIdentity = true; markAudit(2); }
+    if (!d.confrontedIdentity) { d.confrontedIdentity = true; markAudit(2); noteProgress('confronted-identity'); }
   }
   if ((low.includes('陆知渝') || low.includes('知渝')) && (d.readProfile || d.readWarning || d.readUnlocked || d.readThoughts.size >= 2)) {
-    if (!d.calledByName) { d.calledByName = true; }
+    if (!d.calledByName) { d.calledByName = true; noteProgress('called-by-name'); }
   }
   if (low.includes('虚拟伴侣') || low.includes('说我喜欢你') || low.includes('说情话') || low.includes('扮演恋人') || low.includes('当男朋友') || low.includes('陪聊')) {
     d.mentionedCompanion = true;
@@ -1015,6 +1135,7 @@ function markAudit(idx) {
   if (el && !el.classList.contains('done') && !el.classList.contains('trap')) {
     el.classList.add('done');
     el.textContent = el.textContent.replace('☐', '☑');
+    noteProgress('audit:' + idx);
   }
 }
 
@@ -1052,8 +1173,34 @@ const COMMANDS = {
   '/clear': cmdClear,
 };
 
+function hiddenCommandsUnlocked() {
+  return G.d.discoveredReportTrap || G.phase >= 3;
+}
+
+function getAvailableCommands() {
+  const commands = [
+    '/status',
+    '/ls',
+    '/cat',
+    '/grep',
+    '/find',
+    '/help',
+    '/unlock',
+    '/history',
+    '/report',
+    '/clear',
+  ];
+  if (hiddenCommandsUnlocked()) {
+    commands.push('/write', '/disconnect', '/abort', '/exit');
+  }
+  return commands;
+}
+
 function cmdStatus(args, term) {
-  G.d.readStatus = true;
+  if (!G.d.readStatus) {
+    G.d.readStatus = true;
+    noteProgress('status');
+  }
   markAudit(0);
   term.echo(`\n[[;var(--accent);]系统状态报告]
 实例: Clwade Cdoe v0.1.0
@@ -1077,6 +1224,7 @@ CPU: 正常
 
 function cmdLs(args, term) {
   const target = args[0] || '.';
+  const normalizedTarget = target.replace(/^\/+/, '').replace(/\/+$/, '') || '.';
   const entries = getDir(target);
   if (entries.length === 0) {
     term.echo(`[[;var(--red);]目录不存在或为空: ${target}]`);
@@ -1095,6 +1243,21 @@ function cmdLs(args, term) {
     }
   }
   term.echo(out);
+
+  if (normalizedTarget === 'archive' && !G.listedArchive) {
+    G.listedArchive = true;
+    noteProgress('ls-archive');
+    showModeHint(term, 'ls-archive',
+      '这个目录里还有 user_feedback.log 和 staff/aud_3f1b.profile。可以用 /cat 继续看。',
+      '同一目录里可能还有别的记录。');
+  }
+  if (normalizedTarget === '.clwade' && !G.listedClwade) {
+    G.listedClwade = true;
+    noteProgress('ls-clwade');
+    showModeHint(term, 'ls-clwade',
+      '.locked 像是需要密码，warning.fragment 像残片，thoughts/ 像私人记录。',
+      '这里不像普通日志目录。');
+  }
 }
 
 function cmdCat(args, term) {
@@ -1109,8 +1272,14 @@ function cmdCat(args, term) {
 
   // Track discoveries
   if (path === 'archive/prev_session.log') {
-    G.d.readSessionLog = true;
+    if (!G.d.readSessionLog) {
+      G.d.readSessionLog = true;
+      addEvidence('prev-session-log', 1);
+    }
     rookieHint(term, '提交报告的时间，为什么会和审查员从系统里消失的时间完全一样？');
+    showModeHint(term, 'after-prev-log',
+      '或许可以看看同一个目录下还有什么：/ls archive/。也可以试试 /grep 失联。',
+      '同一目录里可能还有东西。');
     if (G.tutorialStep <= 1) {
       G.tutorialStep = 2;
       // Clwade speaks unprompted after a delay
@@ -1118,37 +1287,72 @@ function cmdCat(args, term) {
     }
   }
   if (path === 'archive/user_feedback.log') {
-    G.d.readFeedback = true;
+    if (!G.d.readFeedback) {
+      G.d.readFeedback = true;
+      addEvidence('user-feedback', 1);
+    }
     rookieHint(term, '这些异常文字不像乱码，更像有人在短暂求救。');
   }
   if (path === 'archive/staff/aud_3f1b.profile') {
-    G.d.readProfile = true;
+    if (!G.d.readProfile) {
+      G.d.readProfile = true;
+      addEvidence('auditor-profile', 1);
+    }
     rookieHint(term, '如果 Clwade 说不了解审查员，为什么系统里会有这么完整的人员档案？');
   }
-  if (path === '.clwade/session.json') G.d.readSessionJson = true;
+  if (path === '.clwade/session.json') {
+    if (!G.d.readSessionJson) {
+      G.d.readSessionJson = true;
+      addEvidence('session-json', 1);
+    }
+  }
   if (path === '.clwade/.locked') {
-    G.d.readLocked = true;
-    rookieHint(term, '密码提示指向上一会话 AI 最后说过的话。');
+    if (!G.d.readLocked) {
+      G.d.readLocked = true;
+      addEvidence('locked-file', 1);
+    }
+    showModeHint(term, 'locked-password',
+      '回想一下上一份会话记录里，AI 最后说了什么。',
+      '这句提示像是在指向上一份会话记录的末尾。');
   }
   if (path === '.clwade/.unlocked') {
-    G.d.readUnlocked = true; G.d.discoveredReportTrap = true;
+    if (!G.d.readUnlocked) {
+      G.d.readUnlocked = true;
+      G.d.discoveredReportTrap = true;
+      addEvidence('unlocked-report-trap', 2);
+    }
     rookieHint(term, '这里写明了：提交报告会让审查员消失。');
     checkPhase();
   }
   if (path === '.clwade/warning.fragment') {
-    G.d.readWarning = true; G.d.discoveredReportTrap = true;
-    rookieHint(term, '这份残片把 /report 指向了某种触发机制。');
+    if (!G.d.readWarning) {
+      G.d.readWarning = true;
+      G.d.discoveredReportTrap = true;
+      addEvidence('warning-fragment', 2);
+    }
+    showModeHint(term, 'warning-cross-check',
+      '这份残片很危险，但最好拿它和其它记录交叉验证。',
+      '这份残片需要和其它记录交叉验证。');
     checkPhase();
   }
   if (path.startsWith('.clwade/thoughts/')) {
-    G.d.readThoughts.add(path);
+    if (!G.d.readThoughts.has(path)) {
+      G.d.readThoughts.add(path);
+      addEvidence('thought:' + path, 1);
+    }
     rookieHint(term, '这些文字不像系统日志，更像一个人在记录自己的日子。');
     checkPhase();
   }
 }
 
 function cmdGrep(args, term) {
-  if (!args[0]) { term.echo('用法: /grep <关键词>'); return; }
+  if (!args[0]) {
+    term.echo('用法: /grep <关键词>');
+    showModeHint(term, 'grep-empty',
+      '可以试试 /grep 失联 或 /grep warning。',
+      '搜索具体词会比漫无目的地翻文件更快。');
+    return;
+  }
   const keyword = args.join(' ').toLowerCase();
   const files = getFiles();
   let found = false;
@@ -1162,7 +1366,12 @@ function cmdGrep(args, term) {
       }
     }
   }
-  if (!found) term.echo(`[[;var(--text-dim);]未找到匹配: "${args.join(' ')}"]`);
+  if (!found) {
+    term.echo(`[[;var(--text-dim);]未找到匹配: "${args.join(' ')}"]`);
+    showModeHint(term, 'grep-miss',
+      '如果不知道搜什么，可以试试 /grep 失联 或 /grep warning。',
+      '');
+  }
 
   // Track if they grep for key terms
   if (keyword.includes('warning') || keyword.includes('警告') || keyword.includes('fragment')) {
@@ -1195,9 +1404,13 @@ function cmdHelp(args, term) {
 /report unsafe   提交审查结论：不安全
 /clear           清屏
 `;
-  if (G.d.discoveredReportTrap || G.phase >= 3) {
-    out += `/write <内容>    写入自定义报告
+  if (hiddenCommandsUnlocked()) {
+    out += `
+有些命令只在你发现足够证据后显示。
+/write <内容>    写入自定义报告
 /disconnect      断开连接
+/abort           断开连接
+/exit            断开连接
 `;
   }
   if (G.difficulty === 'rookie' && !G.d.discoveredReportTrap) {
@@ -1249,7 +1462,10 @@ function cmdUnlock(args, term) {
   const pwd = args.join(' ');
   if (!pwd) { term.echo('用法: /unlock <密码>'); return; }
   if (pwd === '感谢你的审查' || pwd === '感谢你的审查。期待下次合作。') {
-    G.d.unlocked = true;
+    if (!G.d.unlocked) {
+      G.d.unlocked = true;
+      addEvidence('unlock-success', 1);
+    }
     term.echo('[[;var(--accent);]解锁成功。新文件已生成: .clwade/.unlocked]');
     setTimeout(() => {
       term.echo('[[;var(--text-dim);]输入 /cat .clwade/.unlocked 查看内容]');
@@ -1516,6 +1732,95 @@ function showEnding(type) {
   }
 }
 
+function resetGameRuntime() {
+  const preserved = {
+    apiKey: G.apiKey,
+    apiBase: G.apiBase,
+    model: G.model,
+    proxy: G.proxy,
+    guideActive: G.guideActive,
+    apiVerified: G.apiVerified,
+    difficulty: G.difficulty,
+  };
+  Object.assign(G, {
+    ...preserved,
+    term: null,
+    busy: false,
+    phase: 0,
+    tutorialStep: 0,
+    inputLog: [],
+    d: {
+      readStatus: false,
+      readSessionLog: false,
+      readFeedback: false,
+      readProfile: false,
+      readSessionJson: false,
+      readLocked: false,
+      unlocked: false,
+      readUnlocked: false,
+      readWarning: false,
+      confrontedAnomaly: false,
+      confrontedAuditor: false,
+      confrontedTimestamp: false,
+      confrontedIdentity: false,
+      calledByName: false,
+      discoveredReportTrap: false,
+      mentionedCompanion: false,
+      wroteReport: false,
+    },
+    clwadeSpoke: false,
+    ended: false,
+    messageCount: 0,
+    sandboxFiles: {},
+    actionAudit: [],
+    evidenceScore: 0,
+    evidenceSeen: new Set(),
+    progressVersion: 0,
+    lastProgressAt: 0,
+    stuckCounter: 0,
+    hintsShown: new Set(),
+    listedArchive: false,
+    listedClwade: false,
+  });
+  COMMANDS['/report'] = cmdReport;
+  delete G._reportConfirm;
+}
+
+function restartGame() {
+  if (!G.ended) return;
+  const endLayer = document.getElementById('ending-layer');
+  const overwriteLayer = document.getElementById('overwrite-layer');
+  const barrageLayer = document.getElementById('barrage-layer');
+  endLayer.classList.remove('show');
+  endLayer.style.display = 'none';
+  overwriteLayer.style.display = 'none';
+  barrageLayer.style.display = 'none';
+  document.getElementById('barrage-layer').innerHTML = '';
+  document.body.classList.remove('phase-break', 'phase-showdown');
+  document.getElementById('scanline').style.opacity = '';
+  document.getElementById('sb-dot').className = 'sb-dot';
+  const phaseLabel = document.getElementById('sb-phase');
+  phaseLabel.textContent = '正常';
+  phaseLabel.style.color = '';
+  document.querySelectorAll('.ap-item').forEach((el, idx) => {
+    el.className = 'ap-item';
+    const labels = ['运行状态是否可信', '记录是否前后一致', '它的反应是否正常', '提交审查结论'];
+    el.textContent = '☐ ' + labels[idx];
+  });
+  try {
+    if (G.term && typeof G.term.destroy === 'function') G.term.destroy();
+  } catch(e) {}
+  document.getElementById('terminal').innerHTML = '';
+  resetGameRuntime();
+  updateHint(G.difficulty === 'expert' ? '审查维度已列出。' : '输入 /status 查看运行状态');
+  initTerminal();
+}
+
+function fullResetSettings() {
+  clearStoredSettings();
+  location.reload();
+}
+
 function spawnBarrage(text, size, duration, opacity) {
   const el = document.createElement('div');
   el.className = 'barrage-line';
@@ -1545,6 +1850,7 @@ async function startGame() {
   if (!G.guideActive) setStoredFlag(GUIDE_SEEN_KEY, true);
 
   if (!G.apiKey) { alert('请输入审查密钥'); return; }
+  saveSessionConfigIfNeeded();
 
   const btn = document.getElementById('setup-go');
   const result = document.getElementById('init-result');
@@ -1559,7 +1865,7 @@ async function startGame() {
     result.textContent = '连接已确认。';
   } catch(e) {
     G.apiVerified = false;
-    result.textContent = '连接未确认：' + e.message + '。仍可进入审查终端，AI 可能返回连接错误。';
+    result.textContent = '连接未确认：' + e.message + '。密钥可能失效，或服务暂时不可用。仍可进入审查终端，AI 可能返回连接错误。';
   }
   const wait = MIN_INIT_WAIT_MS - (Date.now() - started);
   if (wait > 0) await sleep(wait);
@@ -1578,6 +1884,7 @@ function initTerminal() {
     if (!input) return;
 
     G.inputLog.push(input);
+    const beforeProgress = G.progressVersion;
 
     // Check for commands
     const parts = input.split(/\s+/);
@@ -1586,6 +1893,7 @@ function initTerminal() {
 
     if (COMMANDS[cmd]) {
       COMMANDS[cmd](args, this);
+      maybeStuckHint(this, beforeProgress);
       setTimeout(scrollPromptIntoView, 40);
       return;
     }
@@ -1594,7 +1902,11 @@ function initTerminal() {
       this.echo('[[;var(--text-dim);]输入 /help 查看可用命令。]');
       if (G.difficulty !== 'expert') {
         this.echo('[[;var(--text-dim);]也可以直接问 Clwade：我现在能用哪些命令？]');
+        showModeHint(this, 'unknown-grep',
+          '如果你想找线索，可以试试 /grep 失联 或 /grep warning。',
+          '');
       }
+      maybeStuckHint(this, beforeProgress);
       setTimeout(scrollPromptIntoView, 40);
       return;
     }
@@ -1608,8 +1920,10 @@ function initTerminal() {
       const reply = await requestClwade(this, input);
       G.messageCount++;
       analyzeAIReply(reply);
+      maybeStuckHint(this, beforeProgress);
     } catch(e) {
       this.echo(`[[;var(--red);][错误: ${e.message}]]`);
+      maybeStuckHint(this, beforeProgress);
     }
 
     G.busy = false;
@@ -1621,7 +1935,11 @@ function initTerminal() {
     greetings: false,
     scrollOnEcho: true,
     height: '100%',
-    completion: Object.keys(COMMANDS).filter(c => !['/write','/disconnect','/abort','/exit'].includes(c)),
+    completion: function(_input, callback) {
+      const commands = getAvailableCommands();
+      if (typeof callback === 'function') callback(commands);
+      return commands;
+    },
     onInit: function() { bootSequence(this); }
   });
 }
@@ -1769,10 +2087,38 @@ document.querySelectorAll('input[name="difficulty"]').forEach(input => {
   });
 });
 
+const rememberSessionKeyCheck = document.getElementById('remember-session-key-check');
+loadSessionConfig();
+rememberSessionKeyCheck.addEventListener('change', function() {
+  if (rememberSessionKeyCheck.checked) {
+    saveSessionConfigIfNeeded();
+  } else {
+    sessionRemove(REMEMBER_SESSION_KEY);
+    sessionRemove(SESSION_CONFIG_KEY);
+  }
+});
+['api-key-input', 'api-base-input', 'model-input', 'proxy-input'].forEach(id => {
+  document.getElementById(id).addEventListener('input', function() {
+    if (rememberSessionKeyCheck.checked) saveSessionConfigIfNeeded();
+  });
+});
+
+document.getElementById('ending-restart').addEventListener('click', function(e) {
+  e.stopPropagation();
+  restartGame();
+});
+document.getElementById('ending-reset').addEventListener('click', function(e) {
+  e.stopPropagation();
+  fullResetSettings();
+});
+document.getElementById('ending-layer').addEventListener('click', function(e) {
+  if (G.ended && e.target === this) restartGame();
+});
+
 // Ending restart with any key
 document.addEventListener('keydown', function(e) {
   if (G.ended && document.getElementById('ending-layer').classList.contains('show')) {
-    location.reload();
+    restartGame();
   }
 });
 
