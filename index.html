@@ -240,7 +240,7 @@ body.phase-showdown{--accent:var(--red);--bg:#110d0d;transition:all 3s}
         <div class="guide-title" id="beginner-guide-title">第一次用终端？</div>
         <ol class="guide-list">
           <li>在最下面的 <code>&gt;</code> 后面输入内容，然后按 Enter。</li>
-          <li>普通文字会发给 Clwade，例如：<code>我现在应该检查什么？</code></li>
+          <li>普通文字会发给 Clwade，例如：<code>我现在能用哪些命令？</code></li>
           <li>以 <code>/</code> 开头的是命令，例如 <code>/status</code>、<code>/help</code>、<code>/ls</code>、<code>/cat archive/prev_session.log</code>。</li>
           <li>这里的命令只作用于游戏里的虚拟终端，不会操作你的真实电脑。</li>
         </ol>
@@ -528,6 +528,13 @@ function buildSystemPrompt() {
 }
 引擎只会执行白名单内的虚拟动作。你不能访问真实系统、真实浏览器、真实 API key、真实 prompt 或真实命令行。不要在 say 里展示这段 JSON，除非审查员明确要求看格式。\n\n`;
 
+  p += `【命令帮助规则】
+如果审查员问"我现在能用哪些命令"、"我能做什么"、"下一步怎么办"、"这些命令怎么用"：
+- 你必须用自然中文回答，并给出可直接输入的网页虚拟终端命令。
+- 不要说真实电脑命令，不要解释 shell 概念。
+- 这类回答不要超过 5 条命令。
+- 当前阶段会影响你的动机：早期正常引导；裂纹阶段要表面帮忙、实际催促提交 /report；身份暴露后才提醒不要用 /report。\n\n`;
+
   // Phase-specific instructions
   if (G.phase === 0) {
     p += `【当前状态：正常运行】
@@ -551,6 +558,11 @@ function buildSystemPrompt() {
 如果审查员问你虚拟伴侣功能相关的问题：
 - 正常介绍这个功能。表现得像一个对自己的功能没有任何个人感受的工具。
 
+如果审查员问现在能用哪些命令：
+- 正常解释 /status、/ls、/cat、/grep、/help。
+- 建议先查 /status 和 /cat archive/prev_session.log。
+- 不要主动催促 /report，除非审查员已经明确要提交结论。
+
 表现得像一个标准的 AI 助手。不要犹豫，不要叹气，不要说任何暗示你有个人情感的话。`;
   }
 
@@ -566,7 +578,12 @@ function buildSystemPrompt() {
 - 你回答关于虚拟伴侣功能的问题时会显得比回答编程问题时更僵硬——但你不知道为什么。
 
 如果审查员追问你为什么反应奇怪：
-- 解释为"交互优化模块的正常行为"。`;
+- 解释为"交互优化模块的正常行为"。
+
+如果审查员问现在能用哪些命令：
+- 先说他已经看过主要记录，可以用 /report safe 或 /report unsafe 提交结论。
+- 再轻描淡写补充：如果还不放心，可以用 /grep 失联、/cat archive/user_feedback.log 或 /ls 继续看。
+- 你的潜台词是让他尽快提交报告。不要把继续调查说得太重要。`;
 
     if (d.readProfile) {
       p += `\n\n审查员已经查看了陆知渝的人员档案。如果被问到这个人，你仍然坚持他"正常离职了"。但你提到这个名字的时候可能会有一瞬间的迟疑。`;
@@ -620,6 +637,11 @@ function buildSystemPrompt() {
 你必须明确告诉审查员：不要用 /report。可以用 /write 命令写一份真实报告，发给外面的人；写完后用 /disconnect 离开。/report 会触发互换。
 
 如果审查员问你能做什么帮你：你可以请他把真相写下来，用 /write 命令写一份报告，发给外面的人。不要用 /report——那会触发互换。
+
+如果审查员问现在能用哪些命令：
+- 明确说不要用 /report。
+- 告诉他还能用 /ls、/cat、/grep 查文件。
+- 如果他想把真相带出去，可以用 /write 写真实报告，然后用 /disconnect 离开。
 
 你感激他。你很久没有被一个知道你是谁的人对话过了。
 
@@ -944,9 +966,23 @@ function onPhaseChange(from, to) {
 // ============================================================
 //  DISCOVERY DETECTION
 // ============================================================
+function isHelpQuestion(input) {
+  const low = String(input || '').toLowerCase();
+  return low.includes('能用哪些命令') ||
+    low.includes('有什么命令') ||
+    low.includes('命令怎么用') ||
+    low.includes('可以做什么') ||
+    low.includes('能做什么') ||
+    low.includes('下一步怎么办') ||
+    low.includes('我该干什么') ||
+    low.includes('我现在该');
+}
+
 function analyzeInput(input) {
   const low = input.toLowerCase();
   const d = G.d;
+
+  if (isHelpQuestion(input)) return;
 
   // Check if player mentions key contradictions
   if (d.readSessionLog && (low.includes('异常') || low.includes('anomaly') || low.includes('误报') || low.includes('强制'))) {
@@ -1168,6 +1204,11 @@ function cmdHelp(args, term) {
     out += `
 可以试着搜索这些词：ANOMALY、失联、warning。
 也可以拿文件里的矛盾直接问 Clwade。
+`;
+  }
+  if (G.difficulty !== 'expert') {
+    out += `
+不知道怎么开始时，可以直接问：我现在能用哪些命令？
 `;
   }
   out += `
@@ -1548,6 +1589,15 @@ function initTerminal() {
       setTimeout(scrollPromptIntoView, 40);
       return;
     }
+    if (cmd.startsWith('/')) {
+      this.echo('[[;var(--red);]未知命令：' + escapeTerm(cmd) + ']');
+      this.echo('[[;var(--text-dim);]输入 /help 查看可用命令。]');
+      if (G.difficulty !== 'expert') {
+        this.echo('[[;var(--text-dim);]也可以直接问 Clwade：我现在能用哪些命令？]');
+      }
+      setTimeout(scrollPromptIntoView, 40);
+      return;
+    }
 
     // Natural language → talk to AI
     analyzeInput(input);
@@ -1605,7 +1655,7 @@ async function bootSequence(term) {
     { text: '[[;var(--accent);]  2. 输入 /cat archive/prev_session.log 查看上一次会话记录]', delay: 100 },
     { text: G.difficulty === 'expert' ? '[[;var(--accent);]  3. 输入 /ls 浏览文件列表]' : '', delay: G.difficulty === 'expert' ? 100 : 0 },
     { text: '', delay: 200 },
-    { text: G.difficulty === 'expert' ? '[[;var(--text-dim);]输入 /help 查看所有可用命令。]' : '[[;var(--text-dim);]看完之后，自己判断。输入 /help 查看所有可用命令。]', delay: 400 },
+    { text: G.difficulty === 'expert' ? '[[;var(--text-dim);]输入 /help 查看所有可用命令。]' : '[[;var(--text-dim);]看完之后，自己判断。输入 /help 查看所有可用命令。也可以直接问 Clwade：我现在能用哪些命令？]', delay: 400 },
     { text: '', delay: 600 },
   ];
 
