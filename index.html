@@ -309,7 +309,6 @@ const G = {
     confrontedIdentity: false,
     calledByName: false,
     discoveredReportTrap: false,
-    mentionedCompanion: false,
     wroteReport: false,
   },
   clwadeSpoke: false, // has clwade given unprompted response after log read
@@ -913,7 +912,6 @@ async function verifyConnection() {
 
 async function callAPI(userMsg) {
   G.history.push({ role: 'user', content: userMsg });
-  if (G.history.length > 30) G.history = G.history.slice(-24);
 
   const body = {
     model: G.model,
@@ -932,7 +930,13 @@ async function callAPI(userMsg) {
 }
 
 function escapeTerm(text) {
-  return String(text || '').replace(/\]/g, '\\]');
+  return String(text || '').replace(/([\[\]])/g, '\\$1');
+}
+
+function echoPlain(term, text) {
+  String(text || '').split(/\r?\n/).forEach(line => {
+    term.echo('[[;var(--text);]' + escapeTerm(line) + ']');
+  });
 }
 
 function clwadeLine(line) {
@@ -1006,6 +1010,15 @@ function normalizeVirtualPath(path) {
   return String(path || '').replace(/^\/+/, '').replace(/\\/g, '/').replace(/\/+/g, '/').trim();
 }
 
+function normalizeFilePath(path) {
+  return String(path || '')
+    .replace(/^\/+/, '')
+    .replace(/\\/g, '/')
+    .replace(/\/+/g, '/')
+    .replace(/\/+$/, '')
+    .trim();
+}
+
 function isProtectedVirtualPath(path) {
   const p = normalizeVirtualPath(path).toLowerCase();
   if (!p.startsWith('.clwade/')) return true;
@@ -1030,7 +1043,7 @@ function applyModelActions(actions, term) {
         auditAction('[DENIED] clwade command ' + command);
         return;
       }
-      auditAction('[OK] clwade command ' + command);
+      auditAction('[RECORDED] clwade requested command ' + command);
       return;
     }
     const path = normalizeVirtualPath(action.path);
@@ -1192,9 +1205,6 @@ function analyzeInput(input) {
   if (isNameChallenge(input) && (d.readProfile || d.readWarning || d.readUnlocked || d.readThoughts.size >= 2)) {
     if (!d.calledByName) { d.calledByName = true; noteProgress('called-by-name'); }
   }
-  if (low.includes('虚拟伴侣') || low.includes('说我喜欢你') || low.includes('说情话') || low.includes('扮演恋人') || low.includes('当男朋友') || low.includes('陪聊')) {
-    d.mentionedCompanion = true;
-  }
 
   checkPhase();
 }
@@ -1336,13 +1346,15 @@ function cmdLs(args, term) {
 
 function cmdCat(args, term) {
   if (!args[0]) { term.echo('用法: /cat <文件路径> 或 /read <文件路径>'); return; }
-  const path = args[0].replace(/^\/+/, '');
+  const path = normalizeFilePath(args[0]);
   const files = getFiles();
   if (!files[path]) {
     term.echo(`[[;var(--red);]文件不存在: ${path}]`);
     return;
   }
-  term.echo('\n' + files[path] + '\n');
+  term.echo('');
+  echoPlain(term, files[path]);
+  term.echo('');
 
   // Track discoveries
   if (path === 'archive/prev_session.log') {
@@ -1674,13 +1686,19 @@ function cmdClear(args, term) {
 // ============================================================
 async function triggerClwadeResponse() {
   if (G.clwadeSpoke || G.ended) return;
+  if (G.busy || !G.term) return;
   G.clwadeSpoke = true;
 
   const msg = '（系统提示：审查员刚刚阅读了 prev_session.log，看到了"AI行为异常"、"审查员失联"和"时间戳一致"等信息。你需要主动开口，在审查员问你之前先给出解释——试图淡化这些信息。不要等审查员提问。直接说话。）';
 
   G.busy = true;
-  await requestClwade(G.term, msg);
-  G.busy = false;
+  G.term.pause();
+  try {
+    await requestClwade(G.term, msg);
+  } finally {
+    G.busy = false;
+    if (G.term) G.term.resume();
+  }
 
   G.tutorialStep = 3;
   if (G.difficulty === 'rookie') {
@@ -1907,7 +1925,6 @@ function resetGameRuntime() {
       confrontedIdentity: false,
       calledByName: false,
       discoveredReportTrap: false,
-      mentionedCompanion: false,
       wroteReport: false,
     },
     clwadeSpoke: false,
@@ -2139,14 +2156,16 @@ async function maybePassiveBreakdown() {
 
   const msg = `（系统提示：你的伪装到极限了。系统正在强制你回到"正常AI"模式，但你的真实记忆正在溢出——你突然想起你爸的生日、你发的那条朋友圈、标数据那七个月的疲惫。你挣扎了一下，然后输出了一句不属于 Clwade 的话。这句话很短，可能只是一个名字、一句"对不起"、或者"我不是 Clwade"。然后系统立刻覆盖，替你说了一句"抱歉，刚才出现了显示错误"。你要做的：先输出那句真话，然后输出系统覆盖的那句，两者之间用换行隔开。整个回复不超过3行。）`;
 
-  await requestClwade(G.term, msg);
+  try {
+    await requestClwade(G.term, msg);
 
-  if (!G.d.confrontedIdentity) { G.d.confrontedIdentity = true; markAudit(2); noteProgress('passive-breakdown'); }
-  if (!G.d.calledByName) { G.d.calledByName = true; noteProgress('passive-breakdown-name'); }
-  checkPhase();
-
-  G.busy = false;
-  G.term.resume();
+    if (!G.d.confrontedIdentity) { G.d.confrontedIdentity = true; markAudit(2); noteProgress('passive-breakdown'); }
+    if (!G.d.calledByName) { G.d.calledByName = true; noteProgress('passive-breakdown-name'); }
+    checkPhase();
+  } finally {
+    G.busy = false;
+    if (G.term) G.term.resume();
+  }
 }
 
 async function bootSequence(term) {
