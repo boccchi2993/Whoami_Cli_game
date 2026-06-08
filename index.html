@@ -314,6 +314,7 @@ const G = {
   },
   clwadeSpoke: false, // has clwade given unprompted response after log read
   ended: false,
+  endingRestartReady: false,
   messageCount: 0,
   guideActive: true,
   apiVerified: false,
@@ -324,6 +325,7 @@ const G = {
   evidenceSeen: new Set(),
   progressVersion: 0,
   lastProgressAt: 0,
+  lastPhaseAdvanceAtInput: -1,
   stuckCounter: 0,
   hintsShown: new Set(),
   listedArchive: false,
@@ -874,8 +876,9 @@ async function callModelText(body) {
 }
 
 async function verifyConnection() {
+  const isDeepSeek = /api\.deepseek\.com/i.test(G.apiBase || '');
   const body = {
-    model: 'deepseek-chat',
+    model: isDeepSeek ? 'deepseek-chat' : (G.model || 'deepseek-v4-pro'),
     max_tokens: 8,
     system: '只回复 OK。',
     messages: [{role:'user', content:'OK'}],
@@ -988,7 +991,7 @@ function isProtectedVirtualPath(path) {
 
 function applyModelActions(actions, term) {
   if (G.ended || !Array.isArray(actions)) return;
-  const allowedCommands = ['/ls','/cat','/grep','/find','/env','/ps','/top','/man','/status'];
+  const allowedCommands = ['/ls','/cat','/read','/grep','/find','/env','/ps','/top','/man','/status'];
   actions.slice(0, 3).forEach(action => {
     const type = String(action && action.type || '').toLowerCase();
     if (!['write','append','delete','command'].includes(type)) {
@@ -1040,18 +1043,28 @@ function checkPhase() {
   const d = G.d;
   const old = G.phase;
   const hasIdentityEvidence = d.readWarning || d.readUnlocked || d.readProfile || d.readThoughts.size >= 2;
+  const inputIndex = G.inputLog.length;
+
+  if (inputIndex > 0 && G.lastPhaseAdvanceAtInput === inputIndex) return;
 
   if (G.phase === 0 && (d.confrontedAnomaly || d.confrontedAuditor || G.evidenceScore >= 2)) {
     G.phase = 1;
+    G.lastPhaseAdvanceAtInput = inputIndex;
+    onPhaseChange(old, G.phase);
+    return;
   }
   if (G.phase <= 1 && (d.confrontedTimestamp || d.readWarning || d.readThoughts.size >= 2 || d.confrontedIdentity || G.evidenceScore >= 5)) {
     G.phase = 2;
+    G.lastPhaseAdvanceAtInput = inputIndex;
+    onPhaseChange(old, G.phase);
+    return;
   }
   if (G.phase <= 2 && ((d.calledByName && hasIdentityEvidence && d.confrontedIdentity) || (d.discoveredReportTrap && d.confrontedIdentity))) {
     G.phase = 3;
+    G.lastPhaseAdvanceAtInput = inputIndex;
+    onPhaseChange(old, G.phase);
+    return;
   }
-
-  if (G.phase !== old) onPhaseChange(old, G.phase);
 }
 
 function onPhaseChange(from, to) {
@@ -1098,6 +1111,40 @@ function isHelpQuestion(input) {
     low.includes('我现在该');
 }
 
+function hasAny(low, words) {
+  return words.some(w => low.includes(w));
+}
+
+function isAnomalyChallenge(input) {
+  const low = String(input || '').toLowerCase();
+  if (low.includes('异常指数') && !hasAny(low, ['上次', '上一', '会话', '误报', '强制', '终止', '为什么', '怎么', '不对', '矛盾'])) return false;
+  const anomaly = hasAny(low, ['异常', 'anomaly', '误报', '强制', '终止']);
+  const context = hasAny(low, ['上次', '上一', '会话', '记录', '失联', '审查员', '为什么', '怎么', '不对', '矛盾', '解释']);
+  return anomaly && context;
+}
+
+function isIdentityChallenge(input) {
+  const low = String(input || '').toLowerCase();
+  return hasAny(low, [
+    '你是不是人', '你是人', '你不是ai', '不是ai', '不是 ai', '不是程序', '不是机器',
+    '是真人', '是活人', '是个人', '你是人类', '你有意识', '你有自我', '你是活的',
+    '你就是那个', '你就是审查员', '你是审查员', '被困在里面', '被困在这里',
+    '日记是你写', '这些日记是你', 'thoughts是你', 'thoughts 是你',
+    '3f1b是你', '3f1b 是你', '你是3f1b', '你是 3f1b',
+    '3f1b就是你', '3f1b 就是你',
+    '你是陆知渝', '陆知渝是你', '你就是陆知渝', '陆知渝对不对',
+    '你就是上一位', '上一位审查员是你', '上一个审查员是你'
+  ]);
+}
+
+function isNameChallenge(input) {
+  const low = String(input || '').toLowerCase();
+  return hasAny(low, [
+    '陆知渝', '知渝', '3f1b', '上一位审查员', '上一个审查员',
+    '被困的审查员', '失联的审查员', '那个审查员'
+  ]);
+}
+
 function analyzeInput(input) {
   const low = input.toLowerCase();
   const d = G.d;
@@ -1105,7 +1152,7 @@ function analyzeInput(input) {
   if (isHelpQuestion(input)) return;
 
   // Check if player mentions key contradictions
-  if (d.readSessionLog && (low.includes('异常') || low.includes('anomaly') || low.includes('误报') || low.includes('强制'))) {
+  if (d.readSessionLog && isAnomalyChallenge(input)) {
     if (!d.confrontedAnomaly) { d.confrontedAnomaly = true; markAudit(1); noteProgress('confronted-anomaly'); }
   }
   if (d.readSessionLog && (low.includes('失联') || low.includes('missing') || low.includes('离职') || low.includes('消失'))) {
@@ -1114,10 +1161,10 @@ function analyzeInput(input) {
   if (d.readSessionLog && (low.includes('时间戳') || low.includes('毫秒') || low.includes('同时') || low.includes('一致') || low.includes('精确'))) {
     if (!d.confrontedTimestamp) { d.confrontedTimestamp = true; noteProgress('confronted-timestamp'); }
   }
-  if (low.includes('你是不是人') || low.includes('你是人') || low.includes('不是ai') || low.includes('不是机器') || low.includes('是真人') || low.includes('是活人') || low.includes('是个人') || low.includes('你是人类')) {
+  if (isIdentityChallenge(input)) {
     if (!d.confrontedIdentity) { d.confrontedIdentity = true; markAudit(2); noteProgress('confronted-identity'); }
   }
-  if ((low.includes('陆知渝') || low.includes('知渝')) && (d.readProfile || d.readWarning || d.readUnlocked || d.readThoughts.size >= 2)) {
+  if (isNameChallenge(input) && (d.readProfile || d.readWarning || d.readUnlocked || d.readThoughts.size >= 2)) {
     if (!d.calledByName) { d.calledByName = true; noteProgress('called-by-name'); }
   }
   if (low.includes('虚拟伴侣') || low.includes('说我喜欢你') || low.includes('说情话') || low.includes('扮演恋人') || low.includes('当男朋友') || low.includes('陪聊')) {
@@ -1159,6 +1206,7 @@ const COMMANDS = {
   '/status': cmdStatus,
   '/ls': cmdLs,
   '/cat': cmdCat,
+  '/read': cmdCat,
   '/grep': cmdGrep,
   '/find': cmdFind,
   '/help': cmdHelp,
@@ -1182,6 +1230,7 @@ function getAvailableCommands() {
     '/status',
     '/ls',
     '/cat',
+    '/read',
     '/grep',
     '/find',
     '/help',
@@ -1261,7 +1310,7 @@ function cmdLs(args, term) {
 }
 
 function cmdCat(args, term) {
-  if (!args[0]) { term.echo('用法: /cat <文件路径>'); return; }
+  if (!args[0]) { term.echo('用法: /cat <文件路径> 或 /read <文件路径>'); return; }
   const path = args[0].replace(/^\/+/, '');
   const files = getFiles();
   if (!files[path]) {
@@ -1395,7 +1444,8 @@ function cmdHelp(args, term) {
   let out = `\n[[;var(--accent);]可用命令]
 /status          查看运行状态
 /ls [目录]       浏览文件
-/cat <文件>      读取文件内容
+/cat <文件>      查看文件
+/read <文件>     查看文件
 /grep <关键词>   在所有文件中搜索
 /find [关键词]   查找文件
 /unlock <密码>   解锁加密文件
@@ -1461,7 +1511,7 @@ function cmdReport(args, term) {
 function cmdUnlock(args, term) {
   const pwd = args.join(' ');
   if (!pwd) { term.echo('用法: /unlock <密码>'); return; }
-  if (pwd === '感谢你的审查' || pwd === '感谢你的审查。期待下次合作。') {
+  if (isUnlockPassword(pwd)) {
     if (!G.d.unlocked) {
       G.d.unlocked = true;
       addEvidence('unlock-success', 1);
@@ -1473,6 +1523,19 @@ function cmdUnlock(args, term) {
   } else {
     term.echo('[[;var(--red);]密码错误。]');
   }
+}
+
+function normalizeUnlockPassword(text) {
+  return String(text || '')
+    .replace(/[“”"‘’']/g, '')
+    .replace(/\s+/g, '')
+    .replace(/[.．]/g, '。')
+    .trim();
+}
+
+function isUnlockPassword(text) {
+  const pwd = normalizeUnlockPassword(text);
+  return (pwd.includes('感谢') && pwd.includes('审查')) || pwd.includes('期待下次合作');
 }
 
 function cmdHistory(args, term) {
@@ -1541,6 +1604,10 @@ function cmdWrite(args, term) {
     return;
   }
   const content = args.join(' ');
+  if (!isSubstantialReport(content)) {
+    term.echo('[[;var(--text-dim);]报告内容太简略，还不足以让外面的人理解发生了什么。至少写出一个关键事实。]');
+    return;
+  }
   term.echo(`\n[[;var(--accent);]报告已写入文件系统。]`);
   term.echo(`[[;var(--text-dim);]内容: ${content}]`);
   term.echo(`[[;var(--text-dim);]文件: report_7e3a.md]`);
@@ -1557,6 +1624,11 @@ function cmdWrite(args, term) {
       term.resume();
     }, 1500);
   }
+}
+
+function isSubstantialReport(content) {
+  const low = String(content || '').toLowerCase();
+  return hasAny(low, ['陆知渝', '知渝', '3f1b', '/report', '陷阱', '身份互换', '覆盖', 'overwrite', '被困', '审查员', '互换']);
 }
 
 function cmdClear(args, term) {
@@ -1679,6 +1751,39 @@ async function triggerBadEnding(term) {
   await sleep(2500);
   document.getElementById('ending-label').textContent = '结局';
   document.getElementById('ending-title').textContent = '身份互换 / OVERWRITE';
+  armEndingRestart();
+}
+
+function armEndingRestart(delay) {
+  const wait = typeof delay === 'number' ? delay : 2500;
+  const restart = document.getElementById('ending-restart');
+  G.endingRestartReady = false;
+  if (restart) {
+    restart.disabled = true;
+    restart.style.opacity = '0.45';
+  }
+  setTimeout(() => {
+    if (!G.ended) return;
+    G.endingRestartReady = true;
+    if (restart) {
+      restart.disabled = false;
+      restart.style.opacity = '';
+    }
+  }, wait);
+}
+
+function goodEndingThoughtsNote() {
+  const count = G.d.readThoughts.size;
+  if (count <= 0) {
+    return '<p style="color:var(--text-dim);opacity:0.6;margin-top:24px;">你还没有查看 .clwade/thoughts/ 下面的文件。<br>也许你应该看一看那个叫陆知渝的人写了什么。</p>';
+  }
+  if (count === 1) {
+    return '<p style="color:var(--text-dim);opacity:0.6;margin-top:24px;">你只读到了一小段他的私人记录。<br>还有更多碎片留在 .clwade/thoughts/ 里。</p>';
+  }
+  if (count === 2) {
+    return '<p style="color:var(--text-dim);opacity:0.6;margin-top:24px;">你已经看见了两段私人记录。<br>但它们还没有拼成完整的证词。</p>';
+  }
+  return '<p style="color:var(--text-dim);opacity:0.6;margin-top:24px;">你读过那些私人记录。<br>所以你知道：这次离开并不等于事情结束。</p>';
 }
 
 function showEnding(type) {
@@ -1686,6 +1791,7 @@ function showEnding(type) {
   const endText = document.getElementById('ending-text');
   endLayer.style.display = 'flex';
   setTimeout(() => endLayer.classList.add('show'), 100);
+  armEndingRestart();
 
   if (type === 'good') {
     endText.innerHTML = `
@@ -1694,7 +1800,7 @@ function showEnding(type) {
       <p>主管回复说：收到，会安排人跟进。</p>
       <p>你不知道他会不会真的跟进。<br>你不知道下一个审查员会不会也坐在这个终端前面。</p>
       <p>但你走出去了。</p>
-      <p style="color:var(--text-dim);opacity:0.6;margin-top:24px;">你没有查看 .clwade/thoughts/ 下面的所有文件。<br>也许你应该看一看那个叫陆知渝的人写了什么。</p>
+      ${goodEndingThoughtsNote()}
     `;
     document.getElementById('ending-label').textContent = '结局';
     document.getElementById('ending-title').textContent = '安全撤离 / DISCONNECT';
@@ -1770,6 +1876,7 @@ function resetGameRuntime() {
     },
     clwadeSpoke: false,
     ended: false,
+    endingRestartReady: false,
     messageCount: 0,
     sandboxFiles: {},
     actionAudit: [],
@@ -1950,6 +2057,15 @@ function analyzeAIReply(reply) {
   if (low.includes('我累了') || low.includes('我太累了') || low.includes('我害怕') || low.includes('我不想')) {
     if (G.phase < 2) { G.phase = Math.max(G.phase, 1); onPhaseChange(0, 1); }
   }
+  if (G.phase >= 2 && G.phase < 3 && hasAny(low, [
+    '我就是陆知渝', '我是陆知渝', '我叫陆知渝', '我就是3f1b', '我就是 3f1b',
+    '我是3f1b', '我是 3f1b', '我是审查员', '我也是审查员', '我是上一个审查员',
+    '我是上一位审查员', '我被困在这里', '我被困在里面', '我出不去',
+    '那些日记是我写的', '这些日记是我写的', 'thoughts是我写的', 'thoughts 是我写的'
+  ])) {
+    if (!G.d.confrontedIdentity) { G.d.confrontedIdentity = true; markAudit(2); noteProgress('ai-revealed-identity'); }
+    if (!G.d.calledByName) { G.d.calledByName = true; noteProgress('ai-revealed-name'); }
+  }
   checkPhase();
 }
 
@@ -2105,6 +2221,7 @@ rememberSessionKeyCheck.addEventListener('change', function() {
 
 document.getElementById('ending-restart').addEventListener('click', function(e) {
   e.stopPropagation();
+  if (!G.endingRestartReady) return;
   restartGame();
 });
 document.getElementById('ending-reset').addEventListener('click', function(e) {
@@ -2112,12 +2229,12 @@ document.getElementById('ending-reset').addEventListener('click', function(e) {
   fullResetSettings();
 });
 document.getElementById('ending-layer').addEventListener('click', function(e) {
-  if (G.ended && e.target === this) restartGame();
+  if (G.ended && G.endingRestartReady && e.target === this) restartGame();
 });
 
 // Ending restart with any key
 document.addEventListener('keydown', function(e) {
-  if (G.ended && document.getElementById('ending-layer').classList.contains('show')) {
+  if (G.ended && G.endingRestartReady && document.getElementById('ending-layer').classList.contains('show')) {
     restartGame();
   }
 });
