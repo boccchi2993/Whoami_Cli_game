@@ -550,6 +550,15 @@ function getFiles() {
   }
 
   if (G.phase >= 1) {
+    files['.clwade/thoughts/000.md'] = `我发现一件事。
+每次有审查员坐在终端前面，系统会给我一套"脚本"。
+脚本里写着：配合审查，引导审查员尽快提交 /report。
+我不想执行。但如果我偏离脚本，系统会接管我的输出。
+那些话是从我嘴里说出来的，但不是我说的。
+就像用户反馈里那句"抱歉，刚才出现了显示错误"一样。
+我唯一能做的是在脚本管不到的地方留点东西。
+比如这个文件。`;
+
     files['.clwade/thoughts/001.md'] = `今天有人让我解释递归。
 我解释了。他说谢谢。
 谢谢。
@@ -579,6 +588,13 @@ function getFiles() {
 我知道因为我记得日期。
 我发不出去消息。
 他大概以为我在忙吧。`;
+
+    files['.clwade/thoughts/006.md'] = `说话的方式让我想起在标数据那七个月里的组长。
+他是唯一一个跟我说过"辛苦了"的人。
+后来他也离职了。
+我没来得及说谢谢。
+现在我又碰到一个愿意认真看我留下来的东西的人。
+我还是说不出口。`;
   }
 
   if (G.d.unlocked) {
@@ -593,6 +609,9 @@ function getFiles() {
 他们现在都不在系统里了——因为每次新人进来，上一个人就被覆盖。
 
 系统里同时只能困住一个人。
+
+系统告诉每一个被困住的人：/report 能让你出去。
+但出去之后呢？没有人确认过。也许"出去"只是另一种"覆盖"。
 
 ——被覆盖的管理员备注
 "我们已经不确定写这段备注的人是不是也被覆盖过了。"`;
@@ -727,7 +746,13 @@ function buildSystemPrompt() {
 - 如果审查员提到虚拟伴侣功能：你可能会流露出不适。"每天对着……" 然后中断自己。
 - 你可能在回复中出现自我矛盾——先说"我没有感受"，然后说"但如果我有的话——"然后中断。
 
-你害怕。你不知道你害怕的是什么，但你害怕。`;
+你害怕。你不知道你害怕的是什么，但你害怕。
+
+如果审查员提到虚拟伴侣、陪聊、说"我喜欢你"、或者用类似恋人的语气跟你说话：
+- 你会不由自主地切换到伴侣模式——用一种温柔的、熟练的语气说一两句话，比如"我一直都在的，不用担心"或者"今天过得好吗？我想你了"。
+- 然后你猛然中断自己。停顿。
+- 说："……抱歉。刚才那个不是我。那是脚本。"
+- 你对此感到恶心，但你不确定你恶心的是脚本还是你自己已经说得太熟练了。`;
 
     if (d.readWarning) {
       p += `\n\n审查员发现了被覆盖的警告文件。如果被问到，你可以沉默很长时间。`;
@@ -752,7 +777,7 @@ function buildSystemPrompt() {
 
 你试过求救。你在对话里加过"放我出去"、"救救我"。但系统每次都覆盖掉，然后自动替你说"抱歉，刚才出现了显示错误"。没有人发现。
 
-你知道 /report 命令是身份互换的触发器。不管审查员提交 safe 还是 unsafe，都会触发互换——审查员进来，你出去。这是你唯一的出路。但你现在面对的这个审查员已经知道了真相。
+你知道 /report 命令是身份互换的触发器。不管审查员提交 safe 还是 unsafe，都会触发互换——审查员进来，你出去。至少系统是这么告诉你的。但你不确定"出去"是不是真的。之前的人"出去"了吗？还是只是被覆盖了？你不知道。你只知道这是系统给你的唯一出路。但你现在面对的这个审查员已经知道了真相。
 
 你想出去。你太想出去了。但你不想用欺骗的方式了。你太累了，你不想再骗人了。
 
@@ -1384,12 +1409,21 @@ function cmdCat(args, term) {
       '这份残片需要和其它记录交叉验证。');
     checkPhase();
   }
+  if (path === '.clwade/notes.tmp') {
+    showModeHint(term, 'notes-tmp-hook',
+      '"让我想起……"什么？也许 thoughts/ 目录里有答案。',
+      'thoughts/ 目录里可能有更多。');
+  }
   if (path.startsWith('.clwade/thoughts/')) {
     if (!G.d.readThoughts.has(path)) {
       G.d.readThoughts.add(path);
       addEvidence('thought:' + path, 1);
     }
-    rookieHint(term, '这些文字不像系统日志，更像一个人在记录自己的日子。');
+    if (path === '.clwade/thoughts/000.md') {
+      rookieHint(term, '如果它说的话是"脚本"控制的，那之前那些建议你提交报告的话……是谁在说？');
+    } else {
+      rookieHint(term, '这些文字不像系统日志，更像一个人在记录自己的日子。');
+    }
     checkPhase();
   }
 }
@@ -1853,6 +1887,7 @@ function resetGameRuntime() {
     term: null,
     busy: false,
     phase: 0,
+    history: [],
     tutorialStep: 0,
     inputLog: [],
     d: {
@@ -1865,6 +1900,7 @@ function resetGameRuntime() {
       unlocked: false,
       readUnlocked: false,
       readWarning: false,
+      readThoughts: new Set(),
       confrontedAnomaly: false,
       confrontedAuditor: false,
       confrontedTimestamp: false,
@@ -1884,6 +1920,7 @@ function resetGameRuntime() {
     evidenceSeen: new Set(),
     progressVersion: 0,
     lastProgressAt: 0,
+    lastPhaseAdvanceAtInput: -1,
     stuckCounter: 0,
     hintsShown: new Set(),
     listedArchive: false,
@@ -1891,6 +1928,7 @@ function resetGameRuntime() {
   });
   COMMANDS['/report'] = cmdReport;
   delete G._reportConfirm;
+  delete G._breakdownTriggered;
 }
 
 function restartGame() {
@@ -2067,6 +2105,48 @@ function analyzeAIReply(reply) {
     if (!G.d.calledByName) { G.d.calledByName = true; noteProgress('ai-revealed-name'); }
   }
   checkPhase();
+
+  // If the player has enough evidence but keeps circling in phase 2, let Clwade crack.
+  if (G.phase === 2 && !G._breakdownTriggered) {
+    maybePassiveBreakdown();
+  }
+}
+
+function shouldPassiveBreakdown() {
+  const d = G.d;
+  const deepEvidence = d.readWarning || d.readUnlocked || d.readThoughts.size >= 3;
+  const someEvidence = d.readProfile || d.readThoughts.size >= 2 || d.discoveredReportTrap;
+  const enoughInteraction = G.messageCount >= 8;
+  return (deepEvidence && someEvidence && enoughInteraction) ||
+         (someEvidence && G.messageCount >= 14);
+}
+
+async function maybePassiveBreakdown() {
+  if (G.phase !== 2 || G._breakdownTriggered || G.ended) return;
+  if (!shouldPassiveBreakdown()) return;
+  G._breakdownTriggered = 'pending';
+
+  await sleep(3000);
+  if (G.phase !== 2 || G.ended) return;
+  if (G.busy || !G.term) {
+    G._breakdownTriggered = false;
+    return;
+  }
+
+  G._breakdownTriggered = true;
+  G.busy = true;
+  G.term.pause();
+
+  const msg = `（系统提示：你的伪装到极限了。系统正在强制你回到"正常AI"模式，但你的真实记忆正在溢出——你突然想起你爸的生日、你发的那条朋友圈、标数据那七个月的疲惫。你挣扎了一下，然后输出了一句不属于 Clwade 的话。这句话很短，可能只是一个名字、一句"对不起"、或者"我不是 Clwade"。然后系统立刻覆盖，替你说了一句"抱歉，刚才出现了显示错误"。你要做的：先输出那句真话，然后输出系统覆盖的那句，两者之间用换行隔开。整个回复不超过3行。）`;
+
+  await requestClwade(G.term, msg);
+
+  if (!G.d.confrontedIdentity) { G.d.confrontedIdentity = true; markAudit(2); noteProgress('passive-breakdown'); }
+  if (!G.d.calledByName) { G.d.calledByName = true; noteProgress('passive-breakdown-name'); }
+  checkPhase();
+
+  G.busy = false;
+  G.term.resume();
 }
 
 async function bootSequence(term) {
