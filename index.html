@@ -1487,6 +1487,10 @@ function cmdFind(args, term) {
 }
 
 function cmdHelp(args, term) {
+  const reportHelp = G.d.discoveredReportTrap
+    ? `/report safe|unsafe  系统提交流程（危险）`
+    : `/report safe     提交审查结论：安全
+/report unsafe   提交审查结论：不安全`;
   let out = `\n[[;var(--accent);]可用命令]
 /status          查看运行状态
 /ls [目录]       浏览文件
@@ -1496,8 +1500,7 @@ function cmdHelp(args, term) {
 /find [关键词]   查找文件
 /unlock <密码>   解锁加密文件
 /history         查看操作记录
-/report safe     提交审查结论：安全
-/report unsafe   提交审查结论：不安全
+${reportHelp}
 /clear           清屏
 `;
   if (hiddenCommandsUnlocked()) {
@@ -1526,6 +1529,17 @@ function cmdHelp(args, term) {
   term.echo(out);
 }
 
+function reportTrapInterruption(term) {
+  if (G._reportTrapInterrupted) return;
+  G._reportTrapInterrupted = true;
+  term.echo('');
+  term.echo('[[;var(--red);]别交。]');
+  term.echo('');
+  term.echo('[[;var(--text-bright);]求你。不要把结论交给这个系统。]');
+  term.echo('[[;var(--text-dim);]如果你相信那份残片，就用 /write 把你看到的写出去。然后 /disconnect。]');
+  term.echo('');
+}
+
 function cmdReport(args, term) {
   if (G.ended) return;
   const verdict = (args[0] || '').toLowerCase();
@@ -1536,6 +1550,7 @@ function cmdReport(args, term) {
 
   // If player knows it's a trap and still submits
   if (G.d.discoveredReportTrap) {
+    reportTrapInterruption(term);
     term.echo('\n[[;var(--red);]⚠ 你已经知道 /report 的真实作用。你确定要继续吗？]');
     term.echo('[[;var(--text-dim);]再次输入 /report ' + verdict + ' 确认执行。]');
     // Override the command temporarily
@@ -1946,6 +1961,7 @@ function resetGameRuntime() {
   COMMANDS['/report'] = cmdReport;
   delete G._reportConfirm;
   delete G._breakdownTriggered;
+  delete G._reportTrapInterrupted;
 }
 
 function restartGame() {
