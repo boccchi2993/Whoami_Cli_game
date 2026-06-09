@@ -98,6 +98,18 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 .terminal .cmd .cursor{background:var(--accent)!important}
 .terminal .cmd{color:var(--text)}
 .terminal,.terminal .terminal-output,.terminal .cmd{border:none!important;outline:none!important;box-shadow:none!important}
+.terminal .terminal-output>div>div,
+.terminal .cmd,
+.terminal .cmd *:not(.cursor){
+  white-space:pre-wrap!important;
+  overflow-wrap:anywhere;
+  word-break:break-word;
+}
+.terminal .cmd .prompt{
+  white-space:pre!important;
+  overflow-wrap:normal;
+  word-break:normal;
+}
 .terminal .terminal-scroller::-webkit-scrollbar{width:6px}
 .terminal .terminal-scroller::-webkit-scrollbar-track{background:transparent}
 .terminal .terminal-scroller::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.06);border-radius:3px}
