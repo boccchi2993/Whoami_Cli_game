@@ -12,16 +12,6 @@ const { URL } = require('url');
 const PORT = parseInt(process.argv[2]) || 3000;
 const HTML = path.join(__dirname, 'index.html');
 const MAX_BODY_BYTES = parseInt(process.env.MAX_PROXY_BODY_BYTES || '', 10) || 1024 * 1024;
-const DEFAULT_ALLOWED_HOSTS = [
-  'api.anthropic.com',
-  'api.deepseek.com',
-  'api.openai.com'
-];
-const ALLOWED_HOSTS = (process.env.ALLOWED_PROXY_HOSTS || DEFAULT_ALLOWED_HOSTS.join(','))
-  .split(',')
-  .map(h => h.trim().toLowerCase())
-  .filter(Boolean);
-
 const CORS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'POST, GET, OPTIONS',
@@ -30,7 +20,7 @@ const CORS = {
 };
 
 function isAllowedTarget(url) {
-  return url.protocol === 'https:' && ALLOWED_HOSTS.includes(url.hostname.toLowerCase());
+  return url.protocol === 'https:';
 }
 
 function json(res, status, payload) {
@@ -83,7 +73,7 @@ const server = http.createServer((req, res) => {
         return json(res, 400, { error: { message: 'Invalid URL: ' + target } });
       }
       if (!isAllowedTarget(url)) {
-        return json(res, 403, { error: { message: 'Target host is not allowed' } });
+        return json(res, 403, { error: { message: 'Target URL must use HTTPS' } });
       }
 
       const fwd = {

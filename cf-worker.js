@@ -8,19 +8,6 @@ const CORS_HEADERS = {
   'Access-Control-Max-Age': '86400',
 };
 
-const DEFAULT_ALLOWED_HOSTS = [
-  'api.anthropic.com',
-  'api.deepseek.com',
-  'api.openai.com',
-];
-
-function getAllowedHosts(env) {
-  return String(env.ALLOWED_PROXY_HOSTS || DEFAULT_ALLOWED_HOSTS.join(','))
-    .split(',')
-    .map((host) => host.trim().toLowerCase())
-    .filter(Boolean);
-}
-
 function getMaxBodyBytes(env) {
   const configured = Number.parseInt(env.MAX_PROXY_BODY_BYTES || '', 10);
   return Number.isFinite(configured) && configured > 0 ? configured : 1024 * 1024;
@@ -30,7 +17,7 @@ function json(status, payload) {
   return Response.json(payload, { status, headers: CORS_HEADERS });
 }
 
-function parseTarget(rawTarget, allowedHosts) {
+function parseTarget(rawTarget) {
   if (!rawTarget) {
     return { error: json(400, { error: { message: 'Missing X-Target-URL header' } }) };
   }
@@ -42,8 +29,8 @@ function parseTarget(rawTarget, allowedHosts) {
     return { error: json(400, { error: { message: 'Invalid X-Target-URL header' } }) };
   }
 
-  if (target.protocol !== 'https:' || !allowedHosts.includes(target.hostname.toLowerCase())) {
-    return { error: json(403, { error: { message: 'Target host is not allowed' } }) };
+  if (target.protocol !== 'https:') {
+    return { error: json(403, { error: { message: 'Target URL must use HTTPS' } }) };
   }
 
   return { target };
@@ -73,10 +60,7 @@ export default {
       return new Response('Method Not Allowed', { status: 405, headers: CORS_HEADERS });
     }
 
-    const { target, error: targetError } = parseTarget(
-      request.headers.get('X-Target-URL'),
-      getAllowedHosts(env)
-    );
+    const { target, error: targetError } = parseTarget(request.headers.get('X-Target-URL'));
     if (targetError) return targetError;
 
     const { body, error: bodyError } = await readBody(request, getMaxBodyBytes(env));
